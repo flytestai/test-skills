@@ -6,7 +6,7 @@
 
 - 对比新旧行情截图
 - 对比不同软件的行情截图
-- 重点检查字段里的价格、涨跌幅、成交量、总市值、最高价、最低价等数据
+- 对两张截图中所有相同字段的数值和行情数据进行对比
 - 忽略背景颜色、样式和排版差异
 - 自动区分盘中和盘后
 - 输出适合开发和测试使用的精简问题标题
@@ -31,4 +31,3 @@ Use $market-screenshot-compare to compare these two screenshots.
 Use $market-screenshot-compare to summarize mismatched fields.
 Use $market-screenshot-compare to output only new issue titles.
 ```
-
