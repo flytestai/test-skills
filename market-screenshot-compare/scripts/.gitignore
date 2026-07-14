@@ -1,6 +1,0 @@
-.runtime/
-.paddlex-cache/
-.paddle-home/
-.cache/
-dist/
-__pycache__/

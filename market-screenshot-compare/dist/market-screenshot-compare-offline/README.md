@@ -1,23 +1,83 @@
 # market-screenshot-compare
 
-`market-screenshot-compare` 是一个可复用的截图对比技能，适用于行情页、列表页、买卖盘口、席位追踪窗口，以及其他金融场景界面的截图比对。
+`market-screenshot-compare` 是一个用于对比行情截图的 skill。它适合新旧行情截图、同类行情页面、不同软件行情页面的差异核对，重点检查两张截图中所有相同字段的数值、行情数据和排序是否一致。
 
-## 功能说明
+## 主要能力
 
-- 对比两张展示同一对象或同一页面的截图
-- 对齐相同行与字段
-- 穷举检查所有共享可见字段
-- 汇总可见的不一致项
-- 判断差异更像正常刷新，还是展示/逻辑异常
-- 将结论压缩为简短的问题标题
-- 在用户要求时自动忽略已知 bug 类型
-- 使用 skill 内置的 OCR 自举运行时增强字段识别能力
+- 对比两张截图中所有相同字段
+- 重点检查字段里的实际数值、行情数据和排序
+- 忽略背景颜色、排版、主题皮肤、控件样式等纯视觉差异
+- 自动判断盘中和盘后，采用不同严格度
+- 直接读取原始截图并逐字段复核全部共享数据
+- 支持不同软件之间的行情对比
+- 输出适合开发和测试使用的精简 bug 标题
+
+## 核心规则
+
+### 1. 所有相同字段都要对比
+
+- 先找两张图里都能看到的字段
+- 再比这些字段对应的值
+- 不只看字段名，也要看字段里的实际数值、行情数据和排序
+- 不能因为字段位置不同、样式不同就跳过
+
+### 2. 不只是重点字段，所有相同字段都要比
+
+重点字段当然要看，但规则不是只看重点字段，而是：
+
+- 两张截图中所有相同字段都要对比
+- 所有可见数值都要核对
+- 所有行情数据都要核对
+- 字段内容有顺序时，还要核对顺序是否正确
+- 只要是共享字段，就不能漏掉
+
+### 3. 盘中 / 盘后模式
+
+skill 会结合有效时间自动判断是盘中还是盘后。
+
+时间来源只允许：
+
+- 第一优先：截图右下角由软件显示的截图时间
+- 第二优先：用户发送截图或消息的时间，仅在右下角软件时间无法识别时使用
+- 禁止使用页面其他业务时间、K 线/分时时间、系统当前时间、任务栏时间、图片文件时间、EXIF 时间或文件名时间
+- 两个有效时间源都取不到时，按盘后严格模式处理，并说明时间来源未能确认
+
+盘后规则：
+
+- 所有相同字段必须完全一致
+- 只要有一个字段不同，就要报问题
+
+盘中规则：
+
+- 允许部分实时字段出现小幅波动
+- 如果差异属于截图前后时间导致的合理波动，可以不报
+- 如果一边有值，另一边没值，默认一定是问题
+- 对于稳定字段，盘中也要严格检查
+
+盘中时间范围：
+
+- A 股：交易日 `09:30-11:30`、`13:00-15:00`
+- 港股：交易日 `09:00-12:00`、`13:00-16:00`
+- 其他时间默认按盘后处理
+
+### 4. 不同软件对比
+
+- 如果两张截图不是同一个软件，忽略版式和视觉风格
+- 只比两边都能识别出来的共享字段
+- 字段语义一致即可对比，不要求位置一致
+
+### 5. 重复 bug 处理
+
+- 默认每次截图都输出当前发现的 bug
+- 如果是之前已经报过的同类 bug，先和用户确认是否需要重复报
+- 只有用户明确说“不需要重复报”时，才进行去重
+- 去重时按问题类型合并，不按具体数值拆成多个问题
 
 ## 安装方法
 
-将本技能目录复制到目标运行时的技能目录中。
-
 ### Codex
+
+复制到：
 
 ```text
 %USERPROFILE%/.codex/skills/market-screenshot-compare/
@@ -25,110 +85,40 @@
 
 ### OpenClaw
 
+复制到：
+
 ```text
 <openclaw-home>/skills/market-screenshot-compare/
 ```
 
 ### Hermes
 
+复制到：
+
 ```text
 <hermes-home>/skills/market-screenshot-compare/
 ```
 
-## 必要文件
-
-```text
-market-screenshot-compare/
-  SKILL.md
-  README.md
-  agents/
-    openai.yaml
-  scripts/
-    compare_with_paddleocr.py
-    build_offline_bundle.py
-```
-
-## OCR 增强安装
-
-说明：
-
-- 不需要让使用者手动安装 PaddleOCR。
-- 首次运行 `scripts/compare_with_paddleocr.py` 时，脚本会自动在当前 skill 目录下创建本地虚拟环境并安装 `paddleocr`、`paddlepaddle`、`pillow` 等依赖。
-- 后续再次运行时会直接复用本地运行时。
-- OCR 结果不是“数学意义的 100%”，但相比纯视觉阅读更适合做字段穷举检查。
-- 首次运行需要联网下载依赖包，且 PaddleOCR 仍会按其自身机制下载模型文件。
-
-## 离线分发版
-
-如果你希望“别人只复制 skill 就能直接用 OCR”，请先在一台可联网机器上构建离线分发包：
-
-```text
-python scripts/build_offline_bundle.py --zip
-```
-
-构建完成后会得到一个预热好的 skill 包，里面包含：
-
-- `scripts/.runtime/` 本地 Python 运行时
-- `scripts/.paddle-models/` OCR 模型缓存
-- skill 原始说明和脚本
-
-把这个离线包发给别人后，对方解压并放入 skill 目录即可直接使用，不需要再手动安装 PaddleOCR，也不需要首次联网下载模型。
-
 ## 使用方法
 
-调用示例：
+### 直接调用
 
 ```text
 Use $market-screenshot-compare to compare these two screenshots.
 Use $market-screenshot-compare to summarize mismatched fields.
 Use $market-screenshot-compare to output only new issue titles.
-Use $market-screenshot-compare to suppress bug types that were already reported before.
 ```
 
-### OCR 辅助脚本示例
+### 常见输出风格
 
-```text
-python scripts/compare_with_paddleocr.py 新行情.png 老行情.png
-```
+- 完整差异报告
+- 不一致汇总
+- 可疑问题清单
+- 仅输出问题标题
 
-如果需要过滤已知问题类型：
+## 备注
 
-```text
-python scripts/compare_with_paddleocr.py 新行情.png 老行情.png --known-issue "市值字段不一致" --known-issue "脏数据展示"
-```
-
-如果只想预热本地模型缓存：
-
-```text
-python scripts/compare_with_paddleocr.py --prepare-models-only
-```
-
-## 默认规则
-
-- 先枚举两张截图中所有共享可见字段，再逐字段比对
-- 不允许默认跳过字段；看不清的字段必须明确标记为“未能确认”
-- 默认忽略右下角系统时间
-- 默认忽略背景颜色、黑白主题、皮肤和纯样式差异
-- 当已知 bug 已记录时，按问题类型去重
-- 同一种旧 bug 即使在新截图里再次出现，也不重复提报
-- 去重后只输出本次新增的问题类型
-- 只关注两张截图相同字段的差异
-- 优先用简体中文输出，适合直接发给开发或测试
-
-## 常见去重示例
-
-该技能会抑制重复提报的问题类型，例如：
-
-- 数量标识不一致
-- 排名统计不一致
-- 流值 / 总股本 / 总市值不一致
-- `nan` / `--` 这类空值显示不一致
-- 脏数据或空白记录展示问题
-
-## 校验方法
-
-校验命令示例：
-
-```text
-python <skill-creator>/scripts/quick_validate.py market-screenshot-compare
-```
+- 这份 skill 的目标是尽量完整地找出真正的数据差异
+- 如果字段看不清，必须明确说明，不能默默跳过
+- 无法可靠看清的字段必须明确标记为“未能确认”，不能猜值或静默跳过
+- 若用户明确要求不重复报同类 bug，再启用去重

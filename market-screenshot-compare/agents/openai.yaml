@@ -1,6 +1,6 @@
 interface:
   display_name: "Market Screenshot Compare"
-  short_description: "Compare market screenshots with optional PaddleOCR assistance and condense mismatches into issue titles"
+  short_description: "Compare all shared market screenshot fields and condense mismatches into issue titles"
   default_prompt: "Use $market-screenshot-compare to compare two market screenshots, enumerate all shared visible fields, ignore style-only differences, suppress already known bug types, and condense only new issue types into concise issue titles."
 
 policy:
