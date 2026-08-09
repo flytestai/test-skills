@@ -1,0 +1,8 @@
+interface:
+  display_name: "测试报告生成器"
+  short_description: "根据版本任务、BUG列表和用例执行情况生成Word格式测试报告"
+  category: "自定义技能"
+  built_in: false
+  enabled: true
+  default_prompt: "Use $test-report-generator to generate a test report for version v1.0.0"
+  category_order: 99

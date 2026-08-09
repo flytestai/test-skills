@@ -1,0 +1,46 @@
+{
+  "report_meta": {
+    "platform": "PC",
+    "version": "2.1.7",
+    "requirement_url": "https://doc.weixin.qq.com/doc/w3_AYEAOAZXAL4ZdjRxnzcSAS6eLg35t?scode=AGwAqAeQAA08MNXJ6IAfoAEga7AFk",
+    "test_start_date": "2025.9.15",
+    "test_end_date": "2025.9.28",
+    "smoke_test_date": "2025.9.15",
+    "system_test_start": "2025.9.16",
+    "system_test_end": "2025.9.28",
+    "testers": "魏振",
+    "os": "Win11",
+    "device_name": "DESKTOP-B476138",
+    "processor": "13th Gen Intel(R) Core(TM) i7-13620H (2.40 GHz)",
+    "ram": "24.0 GB (23.7 GB 可用)",
+    "test_basis": "根据开发提供的测试范围",
+    "bug_system_url": "https://chandao.integrity.com.cn/zentao/my-contribute-bug.html",
+    "risk_assessment": "经测试，所覆盖测试场景，全部测试通过，风险可控。",
+    "doc_status": "产品+开发  未提供",
+    "doc_clarity_status": "产品+开发未提供"
+  },
+  "test_scope": [
+    "网页缓存清理功能",
+    "cef版本上线",
+    "webcenter崩溃/webcenter模块删除",
+    "im，ai，popwin项目合并",
+    "IM SDK升级",
+    "登录模块去圆角，界面重新配置",
+    "推送开发",
+    "截图增加快捷键ALT+C",
+    "皮肤文件丢失（升级问题）",
+    "H5下载图片，思维导图"
+  ],
+  "test_cases": {
+    "total": 82,
+    "executed": 82,
+    "execution_rate": "100%"
+  },
+  "bugs": {
+    "total": 27,
+    "fixed": 27,
+    "fix_rate": "100%"
+  },
+  "test_summary": "经测试，所覆盖测试场景，全部测试通过，风险可控。",
+  "conclusion": "测试通过"
+}
