@@ -1,104 +1,162 @@
-# Data Input Guide
+# Data Input Guide — 逐板块引导填写
 
-This reference covers all supported ways to provide test data, matching the structure of `测试报告-PC 2.1.7版本测试.docx`.
+## 板块分类
 
-## JSON Schema
+### 🤖 AI 自动生成（不需要用户填写）
 
-```json
-{
-  "report_meta": {
-    "platform": "PC / iOS / Android / Web",
-    "version": "版本号，如 2.1.7",
-    "requirement_url": "需求文档链接",
-    "test_start_date": "2025.9.15",
-    "test_end_date": "2025.9.28",
-    "smoke_test_date": "冒烟测试日期",
-    "system_test_start": "系统测试开始日期",
-    "system_test_end": "系统测试结束日期",
-    "testers": "测试人员姓名",
-    "os": "Win11 / Win10 / macOS 14 / etc.",
-    "device_name": "设备名称",
-    "processor": "处理器型号",
-    "ram": "内存大小",
-    "test_basis": "测试依据说明",
-    "bug_system_url": "禅道/Jira等BUG系统链接",
-    "risk_assessment": "风险评估结论",
-    "doc_status": "产品文档提供状态",
-    "doc_clarity_status": "文档清晰度评估"
-  },
-  "test_scope": ["功能1", "功能2", "..."],
-  "test_cases": {
-    "total": 82,
-    "executed": 82,
-    "execution_rate": "100%",
-    "passed": 82,
-    "failed": 0
-  },
-  "bugs": {
-    "total": 27,
-    "fixed": 27,
-    "fix_rate": "100%",
-    "details": [
-      {"id": "BUG-001", "title": "标题", "severity": "严重/一般/建议", "status": "已修复/未修复"}
-    ]
-  },
-  "test_summary": "测试总结文字",
-  "conclusion": "测试通过 / 测试不通过 / 有条件通过"
-}
+| 板块 | 生成规则 |
+|------|----------|
+| 测试环境及配置 | 默认 Win11 / DESKTOP-B476138 / i7-13620H / 24GB，用户说才换 |
+| 风险评估 | 基于未关闭 BUG 数量和严重程度分析 |
+| 测试结果 | 汇总测试用例 + BUG 数据，生成总结 |
+| 测试结论 | 根据 BUG 修复率判定：100%=通过，≥90%=有条件通过，<90%=不通过 |
+
+### ✅ 必须引导填写（7 个板块）
+
+对每个缺失板块，先展示**示例**，再让用户填写。
+
+---
+
+## 板块 1：标题（平台 + 版本号）
+
+**示例：**
+```
+PC 2.8.0
+iOS 3.1.5
+Android 4.2.0
+Web 1.0.0
 ```
 
-## Input Methods
+**问法：** "请提供测试平台和版本号，例如：PC 2.8.0"
 
-### Method 1: 对话中描述 (Conversational)
+---
 
-User describes data naturally. Agent extracts structured data from the conversation.
+## 板块 2：需求地址
 
-**Example:**
+**示例：**
 ```
-请为 PC 3.0.0 版本生成测试报告：
-- 平台：PC
-- 版本：3.0.0
-- 测试时间：2026.8.1-2026.8.7
-- 测试人员：张三、李四
-- 测试范围：登录改版、支付优化、消息推送
-- 测试用例：120个全执行，通过率95%
-- BUG：共15个，修复13个，修复率86.7%
-- 测试结论：有条件通过，需修复2个未解决BUG后发布
+【腾讯文档】PC客户端2.8.0版本需求文档
+https://docs.qq.com/doc/DYnZrYkJyeGNIU2xT
+
+包含需求：78、87、91、92、93、95、97、98、99、100、102
 ```
 
-### Method 2: 结构化 JSON 文件
+**问法：** "请提供需求文档链接（支持多个），例如：https://docs.qq.com/doc/xxxxx"
 
-User provides a JSON file. Agent reads and validates, then generates the report.
+---
 
-### Method 3: 模板交互引导 (Template-Guided)
+## 板块 3：测试范围
 
-Agent guides user section by section:
-1. 先确认平台和版本号
-2. 需求文档链接
-3. 测试范围（列出功能点）
-4. 测试计划（时间、人员）
-5. 测试环境及配置
-6. 测试依据
-7. 测试用例执行情况
-8. 测试缺陷统计
-9. 风险评估
-10. 产品文档验证
+**示例：**
+```
+1. 首页全景图（参考东方财富）
+2. 多周期支持K线训练
+3. 多周期支持画线
+4. 支持跨周期画线
+5. 持仓分析
+...
+```
 
-For each section, show the expected format and let user fill in or skip.
+**问法：** "请列出本次测试覆盖的功能模块，每行一个，例如：\n1. 首页全景图\n2. 多周期K线训练\n3. 持仓分析\n..."
 
-## Report Sections Mapped to JSON Fields
+---
 
-| Report Section | JSON Field(s) |
-|---------------|---------------|
-| 标题 | report_meta.platform + report_meta.version |
-| 需求地址 | report_meta.requirement_url |
-| 测试范围 | test_scope[] |
-| 测试计划 | report_meta.test_*_date, testers |
-| 测试环境及配置 | report_meta.os, device_name, processor, ram |
-| 测试依据 | report_meta.test_basis |
-| 测试用例 | test_cases.* |
-| 测试缺陷 | report_meta.bug_system_url, bugs.* |
-| 风险评估 | report_meta.risk_assessment |
-| 产品文档验证 | report_meta.doc_status, doc_clarity_status |
-| 测试结果 | test_cases + bugs + test_summary |
-| 测试结论 | conclusion |
+## 板块 4：测试计划
+
+**示例：**
+```
+测试时间：2026.7.3-2026.8.7
+测试人员：魏振、黎平
+冒烟测试时间：2026.7.3
+系统测试时间：2026.7.4-2026.8.7
+```
+
+**问法：** "请提供测试计划信息：测试起止时间、测试人员、冒烟测试时间、系统测试时间"
+
+---
+
+## 板块 5：测试用例
+
+**示例：**
+```
+测试用例总数：365条
+已执行：365条
+执行率：100%
+```
+
+**问法：** "请提供测试用例执行情况：总用例数、已执行数、执行率"
+
+---
+
+## 板块 6：测试缺陷
+
+**示例：**
+```
+禅道bug链接：https://chandao.xxx.com/...
+bug总计：27个
+已修复：25个
+未修复：2个
+bug修复率：92.6%
+```
+
+**问法：** "请提供BUG统计：禅道链接、BUG总数、已修复数、未修复数"
+
+---
+
+## 板块 7：产品功能说明文档验证
+
+**示例：**
+```
+产品功能说明文档是否提供？产品+开发 未提供
+文档操作说明是否清晰明了？产品+开发未提供
+```
+
+**问法：** "产品功能说明文档是否已提供？文档操作说明是否清晰明了？"
+
+---
+
+## AI 自动生成逻辑（实现参考）
+
+### 风险评估生成
+
+基于两类数据综合分析：
+1. **遗留 BUG**（未修复的 BUG）
+2. **未测试完成模块**（测试范围中标注了未完成/无法测试的项）
+
+```
+if BUG未修复数 == 0 AND 所有模块测试完成:
+    → "经测试，所覆盖测试场景，全部测试通过，风险可控。"
+
+else:
+    → 合并列出风险，按严重度排序：
+      "存在以下遗留问题：
+      1. [致命] BUG-002 支付回调超时 — 影响所有支付功能 — 建议紧急修复
+      2. [一般] 到期提醒VIP专区未完成 — 生产环境无法测试 — 建议上线监控
+      ..."
+```
+
+**未测试完成模块识别**：检查测试范围列表中带有 "无法测试""待验证""未完成""生产环境无法" 等标记的项。
+
+### 测试结果生成
+
+```
+测试用例执行情况：{total}个测试用例全部执行，
+测试用例执行率：{rate}
+测试bug总计：{bug_total}个，修复BUG：{bug_fixed}个，BUG修复率：{bug_fix_rate}
+{整体评估语句}
+```
+
+整体评估：
+- 全部通过 → "经测试，所覆盖测试场景，全部测试通过，风险可控。"
+- 有未修复 → "需关注{unfixed}个未修复BUG，建议修复后回归验证。"
+
+### 测试结论生成
+
+```
+if fix_rate == "100%":
+    → "测试通过"
+elif fix_rate >= 90%:
+    → "有条件通过（需修复剩余{unfixed}个BUG后发布）"
+else:
+    → "测试不通过（存在{unfixed}个未修复BUG，修复率{fix_rate}）"
+```
