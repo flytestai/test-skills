@@ -25,6 +25,7 @@ Start from `config.example.json`. The installer creates this file automatically.
     "name": "Your Name"
   },
   "zentao": {
+    "cliPath": "",
     "openedBuild": "trunk",
     "openedBuildLabel": "主干",
     "serverVersion": "22.4",
@@ -49,13 +50,25 @@ Start from `config.example.json`. The installer creates this file automatically.
 | `zentao.serverVersion` | no | Informational ZenTao version shown in settings |
 | `zentao.cacheSeconds` | no | Background refresh interval, minimum 60, default 300 |
 | `zentao.refreshCooldownMs` | no | Minimum gap between manual refreshes |
-| `zentao.cliPath` | no | Optional explicit path to the ZenTao CLI JS entry |
+| `zentao.cliPath` | no | Optional explicit path to the ZenTao CLI JS entry; use it for a vendored CLI in an independent deployment |
 | `zentao.moduleNames` | no | Map of module IDs to display names |
 | `zentao.bugModules` | no | Optional module choices in the Bug creation dialog |
 
 \* If `tester.account` is empty, all data can still be listed, but "my tasks" and "my Bugs" scopes will be empty. The connection form sets this automatically when a saved connection is used.
 
 `productId` and `taskProjectIds` are **not required**. Older configurations may contain them; they are treated only as compatibility fallbacks and do not limit synchronization.
+
+## Independent deployment
+
+The workbench is a plain Node.js process and does not need the agent runtime after installation. To keep it available when the agent is closed, upgraded, or removed:
+
+1. Install it outside any agent-managed directory, for example `C:\Users\<user>\QDesk` on Windows or `~/qdesk` on macOS/Linux.
+2. Vendor the CLI: copy the installed `zentao-cli` package to `<install>/tools/zentao-cli`, or install it globally in a stable location.
+3. Point `zentao.cliPath` at the copied entry, for example `<install>/tools/zentao-cli/bin/zentao.js`. The installer accepts the same value through `--cli-path`.
+4. Keep Node.js as a system installation and register auto-start against `<install>/start-hidden.vbs` (Windows) or the equivalent service unit.
+5. Credentials stay in the CLI profile (`%USERPROFILE%\.config\zentao\zentao.json` on Windows, `~/.config/zentao/zentao.json` on macOS/Linux), outside both the agent and the workbench directory.
+
+With this layout, closing the agent does not stop the workbench, and uninstalling the agent does not remove the workbench or its CLI.
 
 ## Environment variables
 

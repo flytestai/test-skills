@@ -8,6 +8,7 @@
     "name": ""
   },
   "zentao": {
+    "cliPath": "",
     "openedBuild": "trunk",
     "openedBuildLabel": "主干",
     "serverVersion": "",

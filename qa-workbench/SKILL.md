@@ -52,12 +52,24 @@ node <skill_dir>/scripts/install_workbench.mjs \
   --target ./qa-workbench \
   --account <zentao-account> \
   --name "<display-name>" \
-  --port 4173
+  --port 4173 \
+  --cli-path <zentao-cli>/bin/zentao.js
 ```
 
-The installer copies the application, creates `config.json`, creates `data/`, and patches the Windows launcher health-check port. It has no npm dependencies.
+The installer copies the application, creates `config.json`, creates `data/`, and patches the Windows launcher health-check port. It has no npm dependencies. `--cli-path` writes `zentao.cliPath` into the configuration; omit it to resolve the CLI from `PATH`.
 
 Use `--force` only when updating an existing installation. Existing `data/` and `config.json` are preserved.
+
+#### Independent deployment
+
+To keep the workbench running after the agent is closed or removed, install it outside the agent directory and vendor the CLI:
+
+- target: a neutral path such as `C:\Users\<user>\QDesk` or `~/qdesk`
+- CLI: copy `zentao-cli` to `<install>/tools/zentao-cli` and pass `--cli-path <install>/tools/zentao-cli/bin/zentao.js`
+- auto-start: register the Windows task against `<install>/start-hidden.vbs`
+- credentials: keep the CLI profile in the user profile, not in the workbench directory
+
+See `references/configuration.md` for the full layout.
 
 ### 3. Verify the template before starting
 
