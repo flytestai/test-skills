@@ -18,6 +18,17 @@
    - 本机禅道 CLI 已登录；或
    - 在工作台「配置禅道连接」中填写 URL、账号和密码。
 
+## 独立部署（推荐）
+
+工作台是独立的 Node.js 进程，安装后不依赖 Agent 运行时。建议：
+
+1. 安装到与 Agent 无关的目录，例如 `C:\Users\<user>\QDesk`。
+2. 将 `zentao-cli` 复制到 `<安装目录>\tools\zentao-cli`。
+3. 在 `config.json` 中设置 `"zentao.cliPath": "<安装目录>/tools/zentao-cli/bin/zentao.js"`；通过安装器部署时可直接使用 `--cli-path`。
+4. Windows 登录自启指向 `<安装目录>\start-hidden.vbs`。
+
+这样关闭、升级或卸载 Agent 都不会影响工作台；禅道凭据保存在用户目录的 CLI Profile 中。
+
 ## 快速开始
 
 ```bash

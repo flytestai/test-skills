@@ -15,6 +15,7 @@ Options:
   --account <name>   ZenTao login account
   --name <name>      Display name (default: account)
   --port <number>    Local port (default: 4173)
+  --cli-path <file>  Explicit path to zentao-cli/bin/zentao.js
   --force            Overwrite existing application files (keeps data/)
   --help             Show this help
 
@@ -32,6 +33,7 @@ const options = {
   account: '',
   name: '',
   port: 4173,
+  cliPath: '',
   force: false
 };
 
@@ -51,6 +53,7 @@ for (let i = 2; i < process.argv.length; i += 1) {
   else if (arg === '--account') options.account = value.trim();
   else if (arg === '--name') options.name = value.trim();
   else if (arg === '--port') options.port = Number(value);
+  else if (arg === '--cli-path') options.cliPath = value;
   else fail(`unknown option: ${arg}`);
   i += 1;
 }
@@ -61,6 +64,13 @@ if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535)
 }
 if (options.account && !/^[A-Za-z0-9_.@-]{1,64}$/.test(options.account)) {
   fail('--account contains unsupported characters');
+}
+if (options.cliPath) {
+  const resolvedCli = path.resolve(process.cwd(), options.cliPath);
+  if (!fs.existsSync(resolvedCli) || !fs.statSync(resolvedCli).isFile()) {
+    fail(`--cli-path is not a file: ${resolvedCli}`);
+  }
+  options.cliPath = resolvedCli.split(path.sep).join('/');
 }
 
 const targetDir = path.resolve(process.cwd(), options.target);
@@ -99,6 +109,10 @@ if (!fs.existsSync(configPath)) {
   config.tester = config.tester || {};
   config.tester.account = options.account;
   config.tester.name = options.name || options.account;
+  if (options.cliPath) {
+    config.zentao = config.zentao || {};
+    config.zentao.cliPath = options.cliPath;
+  }
   fs.writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
   effectivePort = Number(config.server.port) || options.port;
   effectiveAccount = config.tester.account;
@@ -109,6 +123,11 @@ if (!fs.existsSync(configPath)) {
     effectivePort = Number(existing.server && existing.server.port) || options.port;
     effectiveAccount = (existing.tester && existing.tester.account) || options.account;
     effectiveName = (existing.tester && existing.tester.name) || options.name;
+    if (options.cliPath) {
+      existing.zentao = existing.zentao || {};
+      existing.zentao.cliPath = options.cliPath;
+      fs.writeFileSync(configPath, `${JSON.stringify(existing, null, 2)}\n`);
+    }
   } catch {
     // Keep the requested port if an existing config cannot be parsed.
   }
@@ -131,6 +150,7 @@ console.log('QDesk workbench installed');
 console.log(`  location : ${targetDir}`);
 console.log(`  port     : ${effectivePort}`);
 console.log(`  account  : ${display}`);
+if (options.cliPath) console.log(`  cli      : ${options.cliPath}`);
 console.log('');
 console.log('Next steps:');
 console.log(`  1. cd "${targetDir}"`);
