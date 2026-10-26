@@ -1,0 +1,21 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4173
+  },
+  "tester": {
+    "account": "",
+    "name": ""
+  },
+  "zentao": {
+    "openedBuild": "trunk",
+    "openedBuildLabel": "主干",
+    "serverVersion": "",
+    "cacheSeconds": 300,
+    "refreshCooldownMs": 5000,
+    "moduleNames": {},
+    "bugModules": [
+      { "id": "0", "name": "未指定" }
+    ]
+  }
+}

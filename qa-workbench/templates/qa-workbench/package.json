@@ -1,0 +1,14 @@
+{
+  "name": "qdesk-qa-workbench",
+  "version": "2.1.0",
+  "private": true,
+  "description": "QDesk local QA workbench: Node.js + ZenTao CLI, background task/Bug sync, Bug creation and daily reports.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,8 +1,20 @@
 # test-skills
 
-Bee Agent 测试相关技能合集，包含行情截图对比和测试报告生成。
+Bee Agent 测试相关技能合集，包含本地测试工作台、行情截图对比和测试报告生成。
 
 ## 技能列表
+
+### qa-workbench
+
+部署一个通过禅道 CLI 驱动的本地测试工作台：自动发现账号可访问的产品、项目和执行，后台静默同步 Bug 与任务，按产品/项目分类，支持 Bug 时间排序、Bug 创建、日报生成、快照缓存和 Windows 开机自启。
+
+**主要能力：**
+- 只需 URL、账号和密码，无需填写产品 ID / 项目 ID
+- Bug 按产品归类，任务按项目归类
+- Bug 支持创建时间、更新时间升序/降序，默认最新更新优先
+- 页面读取本地快照秒开，禅道同步在后台执行
+- 工作日报、Markdown / CSV 导出
+- 本地部署、密码不回传、Windows 登录自启
 
 ### market-screenshot-compare
 
@@ -29,12 +41,15 @@ Bee Agent 测试相关技能合集，包含行情截图对比和测试报告生�
 ## 安装
 
 把对应技能目录复制到 Bee 的 skills 目录下即可使用：
+- `qa-workbench/` → 本地禅道测试工作台
 - `market-screenshot-compare/` → 截图对比
 - `test-report-generator/` → 测试报告生成
 
 ## 使用
 
 ```text
+Use $qa-workbench to deploy a local ZenTao QA workbench for my account.
+Use $qa-workbench to verify background sync and group Bugs by product.
 Use $market-screenshot-compare to compare these two screenshots.
 Use $market-screenshot-compare to summarize mismatched fields.
 Use $test-report-generator to generate a test report for PC 2.8.0.
