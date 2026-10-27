@@ -104,8 +104,11 @@ test('筛选器支持关键词、优先级、项目和逾期条件', () => {
   const projectTasks = Core.filterTasks(state.tasks, { project: '交易系统', status: 'doing' });
   assert.deepEqual(projectTasks.map((task) => task.id), ['T-1006']);
 
-  const overdue = Core.filterTasks(state.tasks, { due: 'overdue' });
+  const overdue = Core.filterTasks(state.tasks, { due: 'overdue', date: FIXED_DATE });
   assert.equal(overdue.length, 0);
+
+  const dueToday = Core.filterTasks(state.tasks, { due: 'today', date: FIXED_DATE });
+  assert.equal(dueToday.length, 4);
 
   const p0Bugs = Core.filterBugs(state.bugs, { severity: 'P0' });
   assert.deepEqual(p0Bugs.map((bug) => bug.id), ['BUG-1183']);

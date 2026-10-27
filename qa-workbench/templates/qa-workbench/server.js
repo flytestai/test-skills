@@ -151,6 +151,7 @@ let snapshotRevision = 0;
 let snapshotInflight = null;
 let snapshotEpoch = 0;
 let lastConnectionError = '';
+let lastConnectionErrorCode = '';
 let syncStartedAt = 0;
 let syncSource = '';
 let syncReason = '';
@@ -189,6 +190,7 @@ function resetRuntime() {
   syncSource = '';
   syncReason = '';
   lastConnectionError = '';
+  lastConnectionErrorCode = '';
   if (nextSyncTimer) {
     clearTimeout(nextSyncTimer);
     nextSyncTimer = null;
@@ -668,6 +670,8 @@ function emptySnapshot() {
   };
 }
 
+const SYNC_TIMEOUT_MS = 15 * 60 * 1000;
+
 function triggerSync(options) {
   const opts = options || {};
   if (snapshotInflight) return snapshotInflight;
@@ -676,22 +680,34 @@ function triggerSync(options) {
   syncSource = opts.reason || 'auto';
   syncReason = opts.reason || '';
   let task = null;
+  let watchdogTimer = null;
   task = (async () => {
+    const watchdog = new Promise((resolve, reject) => {
+      watchdogTimer = setTimeout(() => {
+        reject(new Error('后台同步超时（15 分钟），已中止本轮；将按计划重试。'));
+      }, SYNC_TIMEOUT_MS);
+      if (watchdogTimer.unref) watchdogTimer.unref();
+    });
     try {
-      const built = await buildSnapshot(Boolean(opts.force));
+      const built = await Promise.race([buildSnapshot(Boolean(opts.force)), watchdog]);
       if (epoch === snapshotEpoch) {
         snapshot = built;
         snapshotAt = Date.now();
         snapshotRevision += 1;
         lastConnectionError = '';
+        lastConnectionErrorCode = '';
         writeSnapshotCache({ snapshot: built, revision: snapshotRevision });
       }
       return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
     } catch (error) {
-      if (epoch === snapshotEpoch) lastConnectionError = String(error && error.message ? error.message : error);
+      if (epoch === snapshotEpoch) {
+        lastConnectionError = String(error && error.message ? error.message : error);
+        lastConnectionErrorCode = error && error.code ? String(error.code) : '';
+      }
       console.error(`[QDesk] 后台同步失败（${syncSource}）：`, lastConnectionError);
       return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
     } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
       if (snapshotInflight === task) snapshotInflight = null;
       syncStartedAt = 0;
       scheduleNextSync();
@@ -705,7 +721,9 @@ function scheduleNextSync(delayMs) {
   if (!schedulerStarted) return;
   if (nextSyncTimer) clearTimeout(nextSyncTimer);
   const delay = delayMs == null
-    ? (lastConnectionError ? 60000 : config.zentao.cacheSeconds * 1000)
+    ? (lastConnectionError
+      ? (lastConnectionErrorCode === 'AUTH_EXPIRED' ? 10 * 60 * 1000 : 60000)
+      : config.zentao.cacheSeconds * 1000)
     : delayMs;
   nextSyncTimer = setTimeout(() => {
     nextSyncTimer = null;
@@ -969,18 +987,37 @@ function readJsonBody(req, limit) {
   });
 }
 
+const PROBE_TIMEOUT_MS = 30000;
+
 async function probeConnection(candidate) {
   const started = Date.now();
   const options = {
     ...cliOptions,
     env: credentialEnv(candidate, process.env),
-    timeoutMs: 90000
+    timeoutMs: 20000
   };
-  const [version, products, projects] = await Promise.all([
-    getVersion({ ...options, timeoutMs: 30000 }).catch(() => ({ cli: 'zentao-cli', server: '' })),
-    listProducts(options),
-    listProjects(options).catch(() => ({ items: [] }))
-  ]);
+  let probeTimer = null;
+  const deadline = new Promise((resolve, reject) => {
+    probeTimer = setTimeout(() => {
+      reject(new Error('连接测试超时（30 秒），请检查网络、禅道地址或账号密码后重试。'));
+    }, PROBE_TIMEOUT_MS);
+    if (probeTimer.unref) probeTimer.unref();
+  });
+  let version;
+  let products;
+  let projects;
+  try {
+    [version, products, projects] = await Promise.race([
+      Promise.all([
+        getVersion({ ...options, timeoutMs: 10000 }).catch(() => ({ cli: 'zentao-cli', server: '' })),
+        listProducts(options),
+        listProjects(options).catch(() => ({ items: [] }))
+      ]),
+      deadline
+    ]);
+  } finally {
+    if (probeTimer) clearTimeout(probeTimer);
+  }
   const productRows = products.items || [];
   if (!productRows.length) {
     throw new Error('连接成功，但当前账号没有可访问的产品。请确认账号权限。');
@@ -1019,7 +1056,8 @@ async function handleApi(req, res, url) {
       productCount: snapshot ? (snapshot.products || []).length : 0,
       projectCount: snapshot ? (snapshot.projectList || []).length : 0,
       connection: currentConnection(snapshot && snapshot.zentao ? snapshot.zentao.server : ''),
-      lastError: lastConnectionError || null
+      lastError: lastConnectionError || null,
+      lastErrorCode: lastConnectionErrorCode || null
     });
     return;
   }

@@ -915,13 +915,14 @@
   function filterTasks(tasks, filters) {
     const f = filters || {};
     const query = String(f.q || '').trim().toLowerCase();
+    const day = f.date || localDate();
     return (tasks || [])
       .filter((task) => {
         if (f.status && f.status !== 'all' && task.status !== f.status) return false;
         if (f.priority && f.priority !== 'all' && task.priority !== f.priority) return false;
         if (f.project && f.project !== 'all' && task.project !== f.project) return false;
-        if (f.due === 'today' && task.dueDate !== localDate()) return false;
-        if (f.due === 'overdue' && !isTaskOverdue(task)) return false;
+        if (f.due === 'today' && task.dueDate !== day) return false;
+        if (f.due === 'overdue' && !isTaskOverdue(task, day)) return false;
         if (query) {
           const haystack = [task.title, task.description, task.project, task.module, task.type, ...(task.tags || [])]
             .join(' ')
