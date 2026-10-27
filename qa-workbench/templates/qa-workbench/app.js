@@ -131,12 +131,33 @@
 
   async function apiRequest(path, options) {
     const opts = options || {};
-    const response = await fetch(path, {
-      method: opts.method || 'GET',
-      headers: Object.assign({ Accept: 'application/json' }, opts.body ? { 'Content-Type': 'application/json' } : {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      cache: 'no-store'
-    });
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 60000;
+    let response;
+    let timeoutTimer = null;
+    try {
+      let signal;
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        signal = AbortSignal.timeout(timeoutMs);
+      } else {
+        const controller = new AbortController();
+        timeoutTimer = setTimeout(() => controller.abort(), timeoutMs);
+        signal = controller.signal;
+      }
+      response = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ Accept: 'application/json' }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        cache: 'no-store',
+        signal
+      });
+    } catch (error) {
+      if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new Error(`本地服务响应超时（${Math.round(timeoutMs / 1000)} 秒），请稍后重试。`);
+      }
+      throw error;
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
     let payload = null;
     try {
       payload = await response.json();
@@ -1955,7 +1976,7 @@
           setBusy('test');
           resultBox.hidden = true;
           try {
-            const result = await apiRequest('/api/zentao/test', { method: 'POST', body: payload() });
+            const result = await apiRequest('/api/zentao/test', { method: 'POST', body: payload(), timeoutMs: 35000 });
             const names = (result.products || []).slice(0, 3).map((product) => product.name).filter(Boolean);
             showResult(`连接成功：${result.account} · ${result.productCount || 0} 个产品 / ${result.projectCount || 0} 个项目${names.length ? ` · ${names.join('、')}${result.productCount > names.length ? ' 等' : ''}` : ''}`, 'success');
           } catch (error) {
@@ -1975,7 +1996,8 @@
           try {
             const result = await apiRequest('/api/zentao/connection', {
               method: 'POST',
-              body: payload()
+              body: payload(),
+              timeoutMs: 120000
             });
             closeModal();
             if (result.snapshot && result.snapshot.sync && result.snapshot.sync.lastSyncAt) {
