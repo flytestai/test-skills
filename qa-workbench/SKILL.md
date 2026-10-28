@@ -11,7 +11,7 @@ Deploy a self-contained local test workbench. The template is a vanilla HTML/CSS
 
 - **QDesk dashboard**: clickable KPI cards for pending tasks, open Bugs opened by the account, tasks due today, and today's report.
 - **Tasks**: all tasks from every execution in projects visible to the account, grouped by project; scopes for mine / test / all.
-- **Bugs**: per-product groups; scope is the union of Bugs opened by the account and assigned to the account; sortable by created time and updated time (newest update first by default).
+- **Bugs**: per-product groups; read scope is the union of Bugs opened by the account and assigned to the account. Write scope is stricter: only Bugs whose `assignedTo` is the current account may be changed. Sortable by created time and updated time (newest update first by default).
 - **Reports**: daily report draft generated from the day's tasks and Bugs, with Markdown copy and exports.
 - **Background sync**: the page renders the last local snapshot immediately; ZenTao sync runs silently in the background.
 - **Connection setup**: only URL, account, password and display name. Product IDs and project IDs are discovered automatically.
@@ -125,6 +125,9 @@ Remove with `uninstall-autostart.ps1`. If the port is not `4173`, use the instal
 ## Operating rules
 
 - **Read-only by default.** Existing tasks and Bugs must not be edited, deleted, or transitioned through this workbench.
+- **Only operate on your own Bugs.** Any Bug edit, close, resolve, activate, or batch transition must be limited to Bugs whose `assignedTo` is the current account. A Bug opened by the account but assigned to someone else is out of scope. A closed Bug stores `assignedTo=closed`, so its previous owner cannot be proven from the current field.
+- **Batch close needs a confirmation list.** Before closing multiple Bugs, generate a read-only list (Bug ID, title, current status) filtered by `assignedTo`, present it to the user, and wait for an explicit "confirm/execute" reply. Close only the confirmed IDs; never include Bugs outside the list. Default cap is 100; require explicit approval to exceed it.
+- **Verify after writing.** Re-read status and assignee for every changed ID, then report success, failure, and skipped items separately.
 - **Never create a real Bug** unless the user explicitly asks to do so and provides the target product and content. Parameter validation alone is not authorization to write.
 - **Do not collect passwords in chat.** Direct the user to the connection form or their own `zentao login`.
 - **Do not expose** `data/zentao-auth.json`, `data/snapshot-cache.json`, tokens, or environment credentials.
@@ -160,10 +163,25 @@ Sync flow:
 5. For each execution, query tasks.
 6. Group Bugs by product and tasks by project; atomically replace the snapshot.
 
+## Safety tooling
+
+Both scripts are read-only and never close or edit a Bug:
+
+```bash
+# Check ownership of specific Bugs; exit 2 if any are not owned or not verifiable
+node scripts/check-bug-owner.mjs 123 456 --require-all-owned
+
+# Generate a confirmation CSV containing only Bugs assigned to the current account
+node scripts/plan-bulk-close.mjs --product 13 --status resolved --output close-plan.csv
+```
+
+`plan-bulk-close.mjs` exits 3 when the owned set exceeds 100; review the CSV and rerun with `--allow-large` only after the user confirms the full list. See `references/safety.md` for the complete workflow.
+
 ## References
 
 - `references/configuration.md` — configuration fields, environment variables, data scope and caching.
 - `references/api-and-data.md` — HTTP API, snapshot lifecycle, local storage and security model.
+- `references/safety.md` — ownership rules, bulk-close confirmation and post-write verification.
 - `references/troubleshooting.md` — CLI errors, empty data, port conflicts, stale snapshots and Windows auto-start.
 
 ## Delivery checklist
@@ -174,4 +192,5 @@ Sync flow:
 - [ ] First background sync completes without `lastError`.
 - [ ] User knows how to open the connection form and that product/project IDs are not required.
 - [ ] User knows existing ZenTao records are read-only.
+- [ ] User knows any Bug write is limited to Bugs assigned to the current account, and bulk close requires a confirmed list.
 - [ ] If auto-start was requested, the scheduled task exists and starts the service.

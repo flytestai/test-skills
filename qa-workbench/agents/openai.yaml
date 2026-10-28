@@ -1,8 +1,8 @@
 interface:
   display_name: "QDesk 测试工作台"
-  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报"
+  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报；写操作仅限本人名下 Bug，批量关闭先确认清单"
   category: "自定义技能"
   built_in: false
   enabled: true
-  default_prompt: "Use $qa-workbench to deploy a local ZenTao QA workbench for my account."
+  default_prompt: "Use $qa-workbench to deploy a local ZenTao QA workbench for my account. Keep existing records read-only; only operate on Bugs assigned to me and show a confirmation list before any batch close."
   category_order: 99
