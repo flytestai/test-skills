@@ -9243,3 +9243,18 @@ kbd {
     font-size: 11px;
   }
 }
+
+/* Progress ring tone: red when slow, green when on track */
+.hero-progress-wrap {
+  --focus-color: #5fe0a8;
+}
+
+.focus-ring {
+  background: conic-gradient(var(--focus-color) calc(var(--progress) * 1%), rgba(255, 255, 255, 0.13) 0);
+  transition: background 0.25s ease;
+}
+
+.hero-progress-meta .mini-line i {
+  background: var(--focus-color);
+  transition: width 0.3s ease, background 0.25s ease;
+}

@@ -750,6 +750,9 @@
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
     const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
     const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
+    const focusOnTrack = dailyFocus.progress >= 60;
+    const focusColor = focusOnTrack ? '#5fe0a8' : '#ff6b6b';
+    const focusLabel = dailyFocus.progress >= 80 ? '进度较快' : focusOnTrack ? '进度正常' : '进度偏慢';
 
     const riskRows = Object.keys(Core.SEVERITY).map((key) => {
       const count = severity[key];
@@ -774,8 +777,8 @@
             <button class="btn" type="button" data-action="create-bug">${icon('plus')}登记 Bug</button>
           </div>
         </div>
-        <div class="hero-progress-wrap">
-          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%">
+        <div class="hero-progress-wrap" style="--focus-color:${focusColor}">
+          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%，${focusLabel}">
             <div class="focus-ring-inner">
               <strong>${dailyFocus.progress}<span>%</span></strong>
               <small>当日进度</small>
