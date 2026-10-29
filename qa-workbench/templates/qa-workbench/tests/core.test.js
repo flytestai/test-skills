@@ -178,3 +178,11 @@ test('recentActivity 按时间倒序返回活动', () => {
   assert.ok(activity.some((item) => item.kind === 'task'));
   assert.ok(activity.some((item) => item.kind === 'bug'));
 });
+
+test('linkifyText 将纯文本链接转为可点击安全链接', () => {
+  const html = Core.linkifyText('查看企微原文链接: https://wecom-ai-alarm.integrity.com.cn/chatRecord?RequestId=2115300516902121472');
+  assert.match(html, /<a href="https:\/\/wecom-ai-alarm\.integrity\.com\.cn\/chatRecord\?RequestId=2115300516902121472" target="_blank" rel="noopener noreferrer">/);
+  assert.match(html, /查看企微原文链接/);
+  assert.doesNotMatch(Core.linkifyText('<script>alert(1)</script>'), /<script>/);
+  assert.doesNotMatch(Core.linkifyText('javascript:alert(1)'), /<a /);
+});

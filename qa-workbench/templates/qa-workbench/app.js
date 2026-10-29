@@ -1821,12 +1821,12 @@
           </div>
           <div class="drawer-section">
             <div class="drawer-section-title">复现步骤</div>
-            <div class="bug-text-block"><strong>Steps to reproduce</strong>${esc(bug.steps || '未填写')}</div>
+            <div class="bug-text-block"><strong>Steps to reproduce</strong>${Core.linkifyText(bug.steps || '未填写')}</div>
           </div>
           ${(bug.expected || bug.actual) ? `<div class="drawer-section">
             <div class="drawer-section-title">预期结果 vs 实际结果</div>
-            <div class="bug-text-block"><strong>预期结果</strong>${esc(bug.expected || '未填写')}</div>
-            <div class="bug-text-block"><strong>实际结果</strong>${esc(bug.actual || '未填写')}</div>
+            <div class="bug-text-block"><strong>预期结果</strong>${Core.linkifyText(bug.expected || '未填写')}</div>
+            <div class="bug-text-block"><strong>实际结果</strong>${Core.linkifyText(bug.actual || '未填写')}</div>
           </div>` : ''}
           ${task ? `<div class="drawer-section">
             <div class="drawer-section-title">关联任务</div>

@@ -972,6 +972,41 @@
       .sort(compareBugs);
   }
 
+  function trimPlainUrlTail(raw) {
+    let url = String(raw || '');
+    let tail = '';
+    const trimChars = /[.,;:!?，。；：、"'”’]/;
+    while (url && trimChars.test(url.slice(-1))) {
+      tail = url.slice(-1) + tail;
+      url = url.slice(0, -1);
+    }
+    [[')', '('], [']', '['], ['}', '{']].forEach(([close, open]) => {
+      while (url.endsWith(close)) {
+        const closeCount = url.split(close).length - 1;
+        const openCount = url.split(open).length - 1;
+        if (closeCount <= openCount) break;
+        tail = close + tail;
+        url = url.slice(0, -1);
+      }
+    });
+    return { url, tail };
+  }
+
+  function linkifyText(value) {
+    const escaped = String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+    return escaped.replace(/(^|[\s（(【>:：])(https?:\/\/(?:[^\s<>"'&]|&amp;)+)/g, (match, prefix, rawUrl) => {
+      const trimmed = trimPlainUrlTail(rawUrl);
+      if (!trimmed.url) return match;
+      return `${prefix}<a href="${trimmed.url}" target="_blank" rel="noopener noreferrer">${trimmed.url}</a>${trimmed.tail}`;
+    });
+  }
+
   return {
     VERSION,
     TASK_STATUS,
@@ -1006,6 +1041,7 @@
     setBugStatus,
     filterTasks,
     filterBugs,
-    uniqueBy
+    uniqueBy,
+    linkifyText
   };
 });
