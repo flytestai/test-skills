@@ -461,9 +461,16 @@
     return `<span class="status-pill ${TASK_STATUS_CLASS[status] || 'status-todo'}">${esc(meta.label)}</span>`;
   }
 
-  function bugStatusPill(status) {
-    const meta = Core.BUG_STATUS[status] || Core.BUG_STATUS.new;
-    return `<span class="status-pill ${BUG_STATUS_CLASS[status] || 'bug-new'}">${esc(meta.label)}</span>`;
+  function bugStatusLabel(bug) {
+    if (bug && bug.status === 'verifying' && bug.needsMyVerification === false && bug.autojobRelation === 'resolved') {
+      return '我已解决';
+    }
+    return (Core.BUG_STATUS[bug && bug.status] || Core.BUG_STATUS.new).label;
+  }
+
+  function bugStatusPill(status, bug) {
+    const label = bug ? bugStatusLabel(bug) : (Core.BUG_STATUS[status] || Core.BUG_STATUS.new).label;
+    return `<span class="status-pill ${BUG_STATUS_CLASS[status] || 'bug-new'}">${esc(label)}</span>`;
   }
 
   function severityBadge(severity) {
@@ -1109,7 +1116,7 @@
       verifying: rows.filter((bug) => bug.status === 'verifying' && bug.needsMyVerification !== false).length,
       severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
       foundToday: rows.filter((bug) => Core.localDate(bug.createdAt) === today).length,
-      status: group((bug) => (Core.BUG_STATUS[bug.status] || Core.BUG_STATUS.new).label),
+      status: group((bug) => bugStatusLabel(bug)),
       severity: ['P0', 'P1', 'P2', 'P3'].map((key) => ({
         key,
         label: key,
@@ -1231,7 +1238,7 @@
                 <span class="cell-sub">${esc(bug.project)}${bug.version ? `<span class="sep"></span>${esc(bug.version)}` : ''}${bug.isAutojob ? `<span class="sep"></span>优先级 ${esc(bug.pri || '—')}` : ''}${bug.typeLabel ? `<span class="sep"></span>${esc(bug.typeLabel)}` : ''}${bug.businessCategory ? `<span class="sep"></span>${esc(bug.businessCategory)}` : ''}</span>
               </td>
               <td class="col-severity">${severityBadge(bug.severity)}</td>
-              <td class="col-status">${bugStatusPill(bug.status)}</td>
+              <td class="col-status">${bugStatusPill(bug.status, bug)}</td>
               <td class="col-assignee" data-label="负责人">${esc(bug.assignee)}</td>
               <td class="col-created nowrap muted" data-label="创建">${esc(fmtDateTime(bug.createdAt))}</td>
               <td class="col-updated nowrap muted" data-label="更新">${esc(fmtDateTime(bug.updatedAt))}</td>
@@ -1294,7 +1301,10 @@
         <select class="select" data-filter="bug-status" aria-label="按状态筛选">
           <option value="all">全部状态</option>
           <option value="unclosed"${f.status === 'unclosed' ? ' selected' : ''}>未关闭</option>
-          ${Object.keys(Core.BUG_STATUS).map((key) => `<option value="${key}"${f.status === key ? ' selected' : ''}>${Core.BUG_STATUS[key].label}</option>`).join('')}
+          ${Object.keys(Core.BUG_STATUS).map((key) => {
+            const label = key === 'verifying' && ui.bugScope === 'autojob' ? '我已解决' : Core.BUG_STATUS[key].label;
+            return `<option value="${key}"${f.status === key ? ' selected' : ''}>${label}</option>`;
+          }).join('')}
         </select>
         <select class="select" data-filter="bug-product" aria-label="按产品筛选">
           <option value="all">全部产品</option>
@@ -1771,7 +1781,7 @@
             ${linkedBugs.map((bug) => `<button class="linked-item" type="button" data-action="open-bug" data-id="${esc(bug.id)}" style="margin-bottom:6px">
               ${severityBadge(bug.severity)}
               <span style="min-width:0;flex:1"><span class="linked-id">${esc(bug.displayId || '#' + bug.id)}</span><strong>${esc(bug.title)}</strong></span>
-              ${bugStatusPill(bug.status)}
+              ${bugStatusPill(bug.status, bug)}
             </button>`).join('')}
           </div>` : ''}
           <div class="drawer-section">
@@ -1797,7 +1807,7 @@
           <div class="drawer-head-copy">
             <div class="drawer-kicker">${icon('bug')}禅道 Bug ${esc(bug.displayId || '#' + bug.id)} · ${esc(bug.project)}</div>
             <h2 id="drawer-title">${bug.isAutojob ? '<span class="source-badge">AI客服</span>' : ''}${esc(bug.title)}</h2>
-            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span>${bug.isAutojob ? ` <span class="role-badge role-badge-warm" style="margin-left:6px">优先级 ${esc(bug.pri)}</span>` : ''}</p>
+            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status, bug)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span>${bug.isAutojob ? ` <span class="role-badge role-badge-warm" style="margin-left:6px">优先级 ${esc(bug.pri)}</span>` : ''}</p>
           </div>
           <button class="icon-btn" type="button" data-action="close-drawer" aria-label="关闭详情">${icon('close')}</button>
         </header>
@@ -2550,7 +2560,7 @@
     state.bugs.forEach((bug) => {
       if (bug.status === 'closed') return;
       if (bug.severity === 'P0' || bug.severity === 'P1') {
-        items.push({ type: 'bug', id: bug.id, title: bug.title, meta: `${bug.severity} · ${Core.BUG_STATUS[bug.status].label}`, color: SEVERITY_COLOR[bug.severity], weight: bug.severity === 'P0' ? 0 : 1 });
+        items.push({ type: 'bug', id: bug.id, title: bug.title, meta: `${bug.severity} · ${bugStatusLabel(bug)}`, color: SEVERITY_COLOR[bug.severity], weight: bug.severity === 'P0' ? 0 : 1 });
       }
     });
     const autojob = state.autojobStats;
