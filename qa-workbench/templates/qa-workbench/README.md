@@ -13,7 +13,7 @@
 
 ## 安全边界
 
-- 已有任务只读；Bug 写操作只允许针对 `assignedTo` 为当前账号的记录。
+- 禅道已有任务只读；本地任务可在 QDesk 创建、编辑、完成和删除。Bug 写操作只允许针对 `assignedTo` 为当前账号的记录。
 - 我提交但已指派给他人的 Bug 不能修改；已关闭 Bug 的 `assignedTo` 会变成 `closed`，归属必须在关闭前确认。
 - 批量关闭前必须先只读生成清单并让用户确认，只关闭清单内的 ID；默认超过 100 条会拦截。
 - 每次写入后逐条复核状态和指派人，分别报告成功、失败、跳过项。
@@ -74,14 +74,17 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - 工作台顶部「发版：…」只展示已经设置测试时间的版本，并同步显示「测试中」标记和测试窗口 tooltip。
 - 「从禅道刷新版本」复用后台全量同步，不额外调用禅道构建或发布接口。
 
-### 任务管理（只读）
+### 任务管理
 
 - 自动汇总账号可访问项目下的全部任务。
 - 范围：我的任务 / 测试任务 / 全部任务。
 - 项目数量条与项目下拉筛选，按项目归类。
 - 支持关键词、优先级、项目、今日到期筛选。
 - 任务详情展示执行、截止日期、工时、说明与变更记录。
-- 不修改禅道中的已有任务。
+- 点击「新建任务」可手动创建本地任务，填写标题、内容、开始时间、结束时间、优先级，并可选择置顶。
+- 本地任务保存在 `data/app-data.json`，参与任务看板 / 列表、时间筛选和工作台统计，但不会写入禅道；支持编辑、标记完成、重新打开、删除和置顶切换。
+- 任务管理页的状态流转只作用于本地任务；禅道中的已有任务仍然只读。
+- 可通过技能脚本在本地创建任务：`node scripts/add-task.mjs --title "回归验证" --priority P1 --pinned`。
 
 ### Bug 跟踪
 
@@ -123,7 +126,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - 配置禅道连接（URL、账号、密码、显示姓名）。
 - 展示产品数、项目数、自动同步计划、下次同步时间、最近同步时间、同步耗时和错误。
 - 维护岗位、团队、迭代等展示信息。
-- 任务与 Bug 的 JSON / CSV 导出。
+- 本地任务与禅道任务统一参与任务导出；Bug 支持 JSON / CSV 导出。
 
 ## 同步机制
 
@@ -213,6 +216,9 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 | POST | `/api/bugs` | 创建正式 Bug |
 | POST | `/api/bugs/:id/refresh` | 只读取并刷新这一条 Bug，不触发全量同步 |
 | GET | `/api/tasks?scope=mine\|test\|all` | 任务列表与统计 |
+| POST | `/api/tasks` | 创建本地任务（标题、内容、开始 / 结束时间、优先级、置顶） |
+| PATCH | `/api/tasks/:id` | 更新本地任务、状态或置顶 |
+| DELETE | `/api/tasks/:id` | 删除本地任务 |
 | GET | `/api/releases` | 版本目录、测试窗口、置顶 / 优先级与已保存的 `releasePlans` |
 | POST | `/api/releases` | 保存测试时间、置顶、优先级，并关闭 / 重新开启单个版本 |
 | GET / POST | `/api/reports` | 日报读取与保存 |
@@ -222,7 +228,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 
 | 数据 | 位置 |
 | --- | --- |
-| 日报、发版测试时间 / 置顶 / 优先级、展示信息、范围偏好 | `data/app-data.json` |
+| 日报、本地任务、发版测试时间 / 置顶 / 优先级、展示信息、范围偏好 | `data/app-data.json` |
 | 禅道连接（含本地密码） | `data/zentao-auth.json` |
 | 最近成功快照（含任务 / Bug 业务数据） | `data/snapshot-cache.json` |
 | 界面偏好 | 浏览器 `localStorage`，键名 `qdesk.ui.v2` |
@@ -241,7 +247,7 @@ npm test
 - 服务默认只绑定 `127.0.0.1`。
 - 密码只保存在本机 `data/zentao-auth.json`，接口只返回 `hasPassword`。
 - 错误信息会替换密码后再返回，日志不记录请求体或凭证。
-- 已有任务只读；已有 Bug 仅当 `assignedTo` 为当前账号时，才可通过禅道 CLI 编辑、指派、解决、关闭、激活和删除。
+- 禅道已有任务只读；本地任务只保存在 QDesk，不产生禅道写入。已有 Bug 仅当 `assignedTo` 为当前账号时，才可通过禅道 CLI 编辑、指派、解决、关闭、激活和删除。
 - 只有主动提交「登记 Bug」或 Bug 编辑 / 状态操作时才会向禅道写入记录；写入后只增量刷新该 Bug，不触发全量同步。
 - 已启用静态资源白名单、CSP、`X-Frame-Options: DENY`、同源校验和请求体大小限制。
 - 这是个人效率工具，不替代正式项目管理和缺陷管理系统。

@@ -307,6 +307,59 @@ test('Store persists release test windows and rejects invalid ranges', () => {
   });
 });
 
+test('Store creates, updates and deletes local tasks', () => {
+  withTempStore((store, file) => {
+    const task = store.createLocalTask({
+      title: '回归验证登录流程',
+      description: '覆盖账号密码与验证码登录。',
+      startAt: '2026-10-30T09:00',
+      endAt: '2026-10-30T18:00',
+      priority: 'P1',
+      pinned: true
+    });
+    assert.match(task.id, /^LT-\d+$/);
+    assert.equal(task.title, '回归验证登录流程');
+    assert.equal(task.startAt, '2026-10-30T09:00');
+    assert.equal(task.endAt, '2026-10-30T18:00');
+    assert.equal(task.dueDate, '2026-10-30');
+    assert.equal(task.priority, 'P1');
+    assert.equal(task.pinned, true);
+    assert.equal(task.isLocal, true);
+    assert.equal(task.isMine, true);
+    assert.equal(task.status, 'todo');
+
+    const reloaded = new Store(file);
+    assert.equal(reloaded.getLocalTasks().length, 1);
+    assert.equal(reloaded.getLocalTasks()[0].title, '回归验证登录流程');
+    assert.equal(reloaded.getLocalTasks()[0].pinned, true);
+
+    const updated = store.updateLocalTask(task.id, {
+      title: '回归验证登录与退出',
+      status: 'done',
+      priority: 'P0',
+      pinned: false
+    });
+    assert.equal(updated.title, '回归验证登录与退出');
+    assert.equal(updated.status, 'done');
+    assert.ok(updated.completedAt);
+    assert.equal(updated.priority, 'P0');
+    assert.equal(updated.pinned, false);
+    assert.ok(updated.history.some((item) => item.text === '完成了本地任务'));
+
+    assert.throws(() => store.createLocalTask({ title: '' }), /任务标题不能为空/);
+    assert.throws(
+      () => store.createLocalTask({ title: '时间错误', startAt: '2026-10-31T09:00', endAt: '2026-10-30T18:00' }),
+      /任务结束时间不能早于开始时间/
+    );
+    assert.throws(() => store.createLocalTask({ title: '优先级错误', priority: 'P9' }), /任务优先级无效/);
+    assert.throws(() => store.updateLocalTask('LT-9999', { title: '不存在' }), /本地任务不存在/);
+
+    store.deleteLocalTask(task.id);
+    assert.equal(store.getLocalTasks().length, 0);
+    assert.equal(new Store(file).getLocalTasks().length, 0);
+  });
+});
+
 test('HTTP service exposes only whitelisted static files and safe health data', async () => {
   const server = createHttpServer();
   await new Promise((resolve, reject) => {

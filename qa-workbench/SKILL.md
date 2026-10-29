@@ -1,6 +1,6 @@
 ---
 name: qa-workbench
-description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, daily reports, local snapshots and Windows auto-start. It also watches Bugs created by an AI customer-service account (default autojob) from customer-service group chats and shows unresolved, pending-verification, closed and high-priority counts on the dashboard for daily follow-up. A release-management page groups versions from task executions and Bug versions and stores local test start/end windows, pinning and P1–P3 priorities linked to the dashboard. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, a customer-feedback tracker, or want to run this workbench for another account or team."
+description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, local task creation, daily reports, local snapshots and Windows auto-start. It also watches Bugs created by an AI customer-service account (default autojob) from customer-service group chats and shows unresolved, pending-verification, closed and high-priority counts on the dashboard for daily follow-up. A release-management page groups versions from task executions and Bug versions and stores local test start/end windows, pinning and P1–P3 priorities linked to the dashboard. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, a customer-feedback tracker, or want to run this workbench for another account or team."
 ---
 
 # QDesk QA Workbench
@@ -11,7 +11,7 @@ Deploy a self-contained local test workbench. The template is a vanilla HTML/CSS
 
 - **QDesk dashboard**: clickable KPI cards for pending-verification Bugs, open Bugs opened by the account, tasks due today, and pending tasks.
 - **Releases**: a 发版管理 page above 任务管理 that derives versions from synchronized task executions and Bug versions, shows task progress and pending/open Bug counts that link directly to a version-filtered Bug list, and lets the user set local test start/end windows, pin versions, assign P1/P2/P3 priorities, or close/reopen a release. Pinned versions sort first; the rest sort P1 → P2 → P3 → unset. Test windows, pinning, priorities and close flags are local-only and never written back to ZenTao. The dashboard's `发版：…` line only lists versions with a configured test time and follows the same pin/priority order.
-- **Tasks**: all tasks from every execution in projects visible to the account, grouped by project; scopes for mine / test / all.
+- **Tasks**: all tasks from every execution in projects visible to the account, grouped by project; scopes for mine / test / all. Users can also create local tasks with a title, content, start/end time, priority and pin flag; local tasks participate in the task board/list, due filters and dashboard counts, but never sync to ZenTao.
 - **Bugs**: per-product groups; read scope is the union of Bugs opened by the account and assigned to the account. Write scope is stricter: only Bugs whose `assignedTo` is the current account may be changed. Sortable by created time and updated time (newest update first by default).
 - **Customer-feedback watch**: detects Bugs opened by the configured AI/autojob account (default `autojob`) that the current account handled, and shows unresolved, pending-verification and closed counts on the dashboard. It highlights P0/P1 items, lists daily follow-ups, and labels the source as AI-extracted customer-service chat. The source is usually a customer-service group chat where AI extracts customer complaints into ZenTao Bugs. Write scope is unchanged: follow-up reads are broad, but any Bug edit still requires `assignedTo` to be the current account.
 - **Reports**: daily report draft generated from the day's tasks and Bugs, with Markdown copy and exports.
@@ -131,6 +131,27 @@ No product ID or project ID is required. Clicking **测试连接** validates the
 
 If the local CLI profile is already authenticated and the account is known, the workbench can run without saving a password. Ensure `tester.account` in `config.json` is set to that account.
 
+### Local task creation
+
+Users can click **新建任务** on the 任务管理 page and fill in title, content, start time, end time, priority and 置顶. Local tasks are stored only in `data/app-data.json`; they never write to ZenTao.
+
+To create one through the skill, call the local API with the bundled helper:
+
+```bash
+node <skill_dir>/scripts/add-task.mjs \
+  --title "回归验证登录流程" \
+  --description "覆盖账号密码与验证码登录" \
+  --start "2026-10-30T09:00" \
+  --end "2026-10-30T18:00" \
+  --priority P1 \
+  --pinned
+```
+
+- The helper posts to `http://127.0.0.1:4173/api/tasks`; override with `QDESK_URL` or `--url`.
+- It prints the created task as JSON, including the generated `LT-…` ID.
+- Use `--json '{...}'` (or `--json -` with stdin) when passing a full payload.
+- This is a local QDesk write, not a ZenTao write. It does not need ZenTao credentials.
+
 ### 6. Optional Windows auto-start
 
 ```powershell
@@ -147,7 +168,7 @@ Remove with `uninstall-autostart.ps1`. If the port is not `4173`, use the instal
 
 ## Operating rules
 
-- **Read-only by default.** Existing tasks must not be edited, deleted, or transitioned through this workbench. Bug writes are explicit user actions only.
+- **Read-only by default.** Existing ZenTao tasks must not be edited, deleted, or transitioned through this workbench. Local QDesk tasks (`isLocal: true`) may be created, edited, completed or deleted locally. Bug writes are explicit user actions only.
 - **Only operate on your own Bugs.** Any Bug edit, close, resolve, activate, or batch transition must be limited to Bugs whose `assignedTo` is the current account. A Bug opened by the account but assigned to someone else is out of scope. A closed Bug stores `assignedTo=closed`, so its previous owner cannot be proven from the current field.
 - **Batch close needs a confirmation list.** Before closing multiple Bugs, generate a read-only list (Bug ID, title, current status) filtered by `assignedTo`, present it to the user, and wait for an explicit "confirm/execute" reply. Close only the confirmed IDs; never include Bugs outside the list. Default cap is 100; require explicit approval to exceed it.
 - **Verify after writing.** Re-read status and assignee for every changed ID, then report success, failure, and skipped items separately.

@@ -1234,11 +1234,11 @@
     if (!tasks.length) {
       return `<div class="empty-state">
         <div class="empty-icon">${icon('tasks')}</div>
-        <h3>${hasActiveTaskFilters() ? '没有匹配的任务' : '禅道中没有对应的测试任务'}</h3>
-        <p>${hasActiveTaskFilters() ? '试试调整筛选条件，或清空搜索关键词。' : '任务由禅道同步，当前范围下没有待处理记录。可刷新或切换任务范围。'}</p>
+        <h3>${hasActiveTaskFilters() ? '没有匹配的任务' : '当前范围下还没有任务'}</h3>
+        <p>${hasActiveTaskFilters() ? '试试调整筛选条件，或清空搜索关键词。' : '可以手动新建本地任务，或从禅道刷新已有任务。'}</p>
         ${hasActiveTaskFilters()
           ? `<button class="btn btn-soft btn-sm" type="button" data-action="clear-task-filters">${icon('refresh')}清空筛选</button>`
-          : `<button class="btn btn-primary btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button>`}
+          : `<div class="empty-actions"><button class="btn btn-primary btn-sm" type="button" data-action="create-task">${icon('plus')}新建任务</button><button class="btn btn-soft btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button></div>`}
       </div>`;
     }
     return ui.taskView === 'list' ? taskTableHtml(tasks) : taskBoardHtml(tasks);
@@ -1269,10 +1269,13 @@
   }
 
   function renderTaskCard(task) {
-    return `<article class="kanban-card readonly" data-task-id="${esc(task.id)}">
+    const local = Boolean(task.isLocal);
+    return `<article class="kanban-card readonly${local ? ' is-local' : ''}${task.pinned ? ' is-pinned' : ''}" data-task-id="${esc(task.id)}">
       <div class="kanban-card-top">
         ${priorityDot(task.priority)}
-        <span class="type-badge">${esc(task.type)}</span>
+        <span class="type-badge${local ? ' is-local' : ''}">${local ? '本地' : esc(task.type)}</span>
+        ${task.pinned ? `<span class="task-pin-tag">${icon('flag')}置顶</span>` : ''}
+        ${local ? `<button class="card-pin${task.pinned ? ' active' : ''}" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}" aria-label="${task.pinned ? '取消置顶' : '置顶任务'}" title="${task.pinned ? '取消置顶' : '置顶任务'}" aria-pressed="${task.pinned ? 'true' : 'false'}">${icon('flag')}</button>` : ''}
         <button class="card-menu" type="button" data-action="open-task" data-id="${esc(task.id)}" aria-label="查看任务详情">${icon('more')}</button>
       </div>
       <h3><button type="button" data-action="open-task" data-id="${esc(task.id)}">${esc(task.title)}</button></h3>
@@ -1299,7 +1302,7 @@
             ${tasks.map((task) => `<tr>
               <td class="col-title">
                 <button class="task-title-btn" type="button" data-action="open-task" data-id="${esc(task.id)}">${esc(task.title)}</button>
-                <span class="cell-sub"><span class="mono">${esc(task.displayId || '#' + task.id)}</span><span class="sep"></span>${esc(task.type)}${task.execution ? '<span class="sep"></span>' + esc(task.execution) : ''}</span>
+                <span class="cell-sub"><span class="mono">${esc(task.displayId || '#' + task.id)}</span><span class="sep"></span>${esc(task.isLocal ? '本地任务' : task.type)}${task.pinned ? '<span class="local-task-tag">置顶</span>' : ''}${task.execution ? '<span class="sep"></span>' + esc(task.execution) : ''}</span>
               </td>
               <td>${taskStatusPill(task.status)}</td>
               <td>${severityBadge(task.priority)}</td>
@@ -1309,6 +1312,9 @@
               <td>
                 <div class="table-actions">
                   <button class="table-action" type="button" data-action="open-task" data-id="${esc(task.id)}" title="查看任务详情" aria-label="查看任务详情">${icon('arrow-up-right')}</button>
+                  ${task.isLocal ? `<button class="table-action${task.pinned ? ' is-active' : ''}" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}" title="${task.pinned ? '取消置顶' : '置顶任务'}" aria-label="${task.pinned ? '取消置顶' : '置顶任务'}">${icon('flag')}</button>` : ''}
+                  ${task.isLocal ? `<button class="table-action" type="button" data-action="edit-local-task" data-id="${esc(task.id)}" title="编辑本地任务" aria-label="编辑本地任务">${icon('edit')}</button>` : ''}
+                  ${task.isLocal ? `<button class="table-action" type="button" data-action="delete-local-task" data-id="${esc(task.id)}" title="删除本地任务" aria-label="删除本地任务">${icon('trash')}</button>` : ''}
                   ${task.url ? `<a class="table-action" href="${esc(task.url)}" target="_blank" rel="noopener noreferrer" title="在禅道中打开" aria-label="在禅道中打开">${icon('link')}</a>` : ''}
                 </div>
               </td>
@@ -1361,6 +1367,7 @@
       </select>
       <button class="filter-chip${f.due === 'today' ? ' active' : ''}" type="button" data-action="toggle-task-due" style="height:37px;border:1px solid var(--line-strong);background:${f.due === 'today' ? '#fff' : 'rgba(255,255,255,.65)'}">${icon('calendar')} 今日到期</button>
       <div class="toolbar-spacer"></div>
+      <button class="btn btn-primary task-create-btn" type="button" data-action="create-task">${icon('plus')}新建任务</button>
       <div class="segmented" role="group" aria-label="任务视图">
         <button type="button" data-action="set-task-view" data-view="board" class="${ui.taskView === 'board' ? 'active' : ''}">${icon('columns')}看板</button>
         <button type="button" data-action="set-task-view" data-view="list" class="${ui.taskView === 'list' ? 'active' : ''}">${icon('list')}列表</button>
@@ -2602,12 +2609,15 @@
 
   function renderTaskDrawer(task) {
     const linkedBugs = state.allBugs.filter((bug) => bug.taskId === task.id);
+    const local = Boolean(task.isLocal);
+    const scheduleStart = task.startAt ? esc(fmtFullDate(task.startAt)) : '未设置';
+    const scheduleEnd = task.endAt ? esc(fmtFullDate(task.endAt)) : '未设置';
     return `<div class="drawer-overlay" data-drawer-overlay></div>
       <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
         <header class="drawer-head">
           <div class="drawer-head-copy">
-            <div class="drawer-kicker">${icon('tasks')}禅道任务 ${esc(task.displayId || '#' + task.id)} · ${esc(task.type)}</div>
-            <h2 id="drawer-title">${esc(task.title)}</h2>
+            <div class="drawer-kicker">${icon('tasks')}${local ? '本地任务' : '禅道任务'} ${esc(task.displayId || '#' + task.id)}${local ? '' : ` · ${esc(task.type)}`}</div>
+            <h2 id="drawer-title">${esc(task.title)}${task.pinned ? '<span class="release-pinned-tag">置顶</span>' : ''}</h2>
             <p>${esc(task.project)}${task.execution ? ` / ${esc(task.execution)}` : ''} · 创建于 ${esc(fmtDateTime(task.createdAt))}</p>
           </div>
           <button class="icon-btn" type="button" data-action="close-drawer" aria-label="关闭详情">${icon('close')}</button>
@@ -2618,7 +2628,10 @@
               <div class="drawer-field"><span>当前状态</span><div>${taskStatusPill(task.status)}</div></div>
               <div class="drawer-field"><span>优先级</span><div style="display:flex;align-items:center;gap:6px">${priorityDot(task.priority)}<strong style="font-size:10.5px">${esc(task.priority)}</strong></div></div>
               <div class="drawer-field"><span>负责人</span><strong>${esc(task.assignee || '未指派')}</strong></div>
-              <div class="drawer-field"><span>${task.dueSource === 'execution' ? '迭代截止' : '任务截止'}</span><strong>${task.dueDate ? esc(Core.formatDateCN(task.dueDate, true)) : '未设置'}</strong></div>
+              ${local
+                ? `<div class="drawer-field"><span>开始时间</span><strong>${scheduleStart}</strong></div>
+                   <div class="drawer-field"><span>结束时间</span><strong>${scheduleEnd}</strong></div>`
+                : `<div class="drawer-field"><span>${task.dueSource === 'execution' ? '迭代截止' : '任务截止'}</span><strong>${task.dueDate ? esc(Core.formatDateCN(task.dueDate, true)) : '未设置'}</strong></div>`}
               <div class="drawer-field"><span>预计工时</span><strong>${task.estimate ? `${task.estimate} 小时` : '未评估'}</strong></div>
               <div class="drawer-field"><span>所属项目</span><strong>${esc(task.project)}</strong></div>
               <div class="drawer-field"><span>所属执行</span><strong>${esc(task.execution || '—')}</strong></div>
@@ -2627,7 +2640,7 @@
           </div>
           <div class="drawer-section">
             <div class="drawer-section-title">任务说明</div>
-            <p class="drawer-description">${task.description ? esc(task.description) : '禅道中没有补充说明。'}</p>
+            <p class="drawer-description">${task.description ? esc(task.description) : local ? '暂无任务说明。' : '禅道中没有补充说明。'}</p>
             ${task.tags && task.tags.length ? `<div class="drawer-tags">${tagList(task.tags)}</div>` : ''}
           </div>
           ${linkedBugs.length ? `<div class="drawer-section">
@@ -2642,13 +2655,16 @@
             <div class="drawer-section-title">变更记录</div>
             ${timelineHtml(task.history)}
           </div>
-          <div class="readonly-note">${icon('shield')}<span>任务从禅道只读同步。需要修改状态、负责人或截止日期，请到禅道处理。</span></div>
+          <div class="readonly-note">${icon(local ? 'database' : 'shield')}<span>${local ? '本地任务只保存在 QDesk，不会同步到禅道。' : '任务从禅道只读同步。需要修改状态、负责人或截止日期，请到禅道处理。'}</span></div>
         </div>
         <footer class="drawer-footer">
-          <span class="drawer-source">${icon('database')}ZENTAO · ${esc(task.rawStatus)}</span>
+          <span class="drawer-source">${icon('database')}${local ? 'QDESK · 本地任务' : `ZENTAO · ${esc(task.rawStatus)}`}</span>
           <span class="push"></span>
+          ${local ? `<button class="btn btn-sm" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}">${icon('flag')}${task.pinned ? '取消置顶' : '置顶'}</button>
+          <button class="btn btn-sm" type="button" data-action="edit-local-task" data-id="${esc(task.id)}">${icon('edit')}编辑</button>
+          <button class="btn btn-sm btn-danger-ghost" type="button" data-action="delete-local-task" data-id="${esc(task.id)}">${icon('trash')}删除</button>` : ''}
           <button class="btn btn-sm" type="button" data-action="close-drawer">关闭</button>
-          ${task.url ? `<a class="btn btn-sm btn-primary" href="${esc(task.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
+          ${local ? `<button class="btn btn-sm btn-primary" type="button" data-action="toggle-local-task-done" data-id="${esc(task.id)}">${icon(task.status === 'done' ? 'refresh' : 'check')}${task.status === 'done' ? '重新打开' : '标记完成'}</button>` : task.url ? `<a class="btn btn-sm btn-primary" href="${esc(task.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
         </footer>
       </aside>`;
   }
@@ -2776,10 +2792,104 @@
     if (first) first.focus();
   }
 
-  function openTaskModal() {
+  function openTaskModal(task) {
     closeQuickMenu();
     closeNotifications();
-    showToast('任务由禅道同步，请在禅道中创建或调整任务。', 'info');
+    if (task && !task.isLocal) {
+      showToast('禅道任务请在禅道中编辑。', 'warn');
+      return;
+    }
+    const editing = task || null;
+    const title = editing ? editing.title : '';
+    const description = editing ? editing.description : '';
+    const startAt = editing ? toDateTimeInput(editing.startAt) : '';
+    const endAt = editing ? toDateTimeInput(editing.endAt) : '';
+    const priority = editing ? editing.priority : 'P2';
+    const pinned = editing ? Boolean(editing.pinned) : false;
+    const html = `<div class="overlay">
+      <form class="modal modal-lg modal-form" data-form="local-task" novalidate>
+        <div class="modal-head">
+          <div class="modal-title-wrap">
+            <h2>${editing ? '编辑本地任务' : '新建本地任务'}</h2>
+            <p>任务只保存在 QDesk 本机，可设置时间、优先级和置顶，不会写入禅道。</p>
+          </div>
+          <button class="icon-btn modal-close" type="button" data-action="close-modal" aria-label="关闭">${icon('close')}</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            ${field('任务标题', `<input name="title" value="${esc(title)}" maxlength="160" placeholder="例如：回归验证 2.9.0 登录流程" autocomplete="off" autofocus required>`, { full: true, required: true })}
+            ${field('任务内容', `<textarea name="description" rows="4" maxlength="4000" placeholder="补充任务背景、验收标准或执行步骤…">${esc(description)}</textarea>`, { full: true, hint: '可选，最多 4000 字。' })}
+            ${field('开始时间', `<input name="startAt" type="datetime-local" value="${esc(startAt)}">`, { hint: '可选，本地时间。' })}
+            ${field('结束时间', `<input name="endAt" type="datetime-local" value="${esc(endAt)}">`, { hint: '不能早于开始时间。' })}
+            ${field('优先级', `<select name="priority" aria-label="任务优先级">${Object.keys(Core.SEVERITY).map((key) => `<option value="${key}"${key === priority ? ' selected' : ''}>${Core.SEVERITY[key].label}</option>`).join('')}</select>`, { hint: 'P0 最高，P3 最低。' })}
+            <label class="task-pin-check${pinned ? ' is-checked' : ''}">
+              <input name="pinned" type="checkbox"${pinned ? ' checked' : ''}>
+              <span class="task-pin-check-icon">${icon('flag')}</span>
+              <span><strong>置顶任务</strong><small>置顶后固定显示在任务列表最前</small></span>
+            </label>
+          </div>
+          <div class="form-error" role="alert"></div>
+        </div>
+        <div class="modal-footer">
+          <span class="footer-left">${icon('database')}仅保存在 QDesk 本机</span>
+          <button class="btn" type="button" data-action="close-modal">取消</button>
+          <button class="btn btn-primary" type="submit">${icon('check')}${editing ? '保存修改' : '创建任务'}</button>
+        </div>
+      </form>
+    </div>`;
+
+    mountModal(html, {
+      onMount(root) {
+        const form = $('form[data-form="local-task"]', root);
+        const submit = $('button[type="submit"]', form);
+        const submitLabel = submit.innerHTML;
+        const pinCheck = $('input[name="pinned"]', form);
+        const pinBox = $('.task-pin-check', form);
+        pinCheck.addEventListener('change', () => pinBox.classList.toggle('is-checked', pinCheck.checked));
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const data = new FormData(form);
+          const payload = {
+            title: String(data.get('title') || '').trim(),
+            description: String(data.get('description') || '').trim(),
+            startAt: String(data.get('startAt') || ''),
+            endAt: String(data.get('endAt') || ''),
+            priority: String(data.get('priority') || 'P2'),
+            pinned: pinCheck.checked
+          };
+          if (!payload.title) {
+            showFormError(form, '请填写任务标题。');
+            return;
+          }
+          if (payload.startAt && payload.endAt && payload.endAt < payload.startAt) {
+            showFormError(form, '结束时间不能早于开始时间。');
+            return;
+          }
+          submit.disabled = true;
+          submit.dataset.busy = '1';
+          submit.innerHTML = `<span class="spinner small"></span>${editing ? '保存中…' : '创建中…'}`;
+          try {
+            await apiRequest(editing ? `/api/tasks/${encodeURIComponent(editing.id)}` : '/api/tasks', {
+              method: editing ? 'PATCH' : 'POST',
+              body: payload
+            });
+            closeModal({ restoreFocus: false });
+            ui.taskScope = 'mine';
+            ui.taskFilters = { q: '', status: 'all', priority: 'all', project: 'all', due: 'all' };
+            persistState();
+            await pullData({ silent: true });
+            if (ui.view !== 'tasks') navigate('tasks');
+            else renderView(false);
+            showToast(editing ? '本地任务已更新。' : '本地任务已创建。');
+          } catch (error) {
+            showFormError(form, error.message);
+            submit.disabled = false;
+            delete submit.dataset.busy;
+            submit.innerHTML = submitLabel;
+          }
+        });
+      }
+    });
   }
 
   function bugTypeOptions(selected) {
@@ -3120,6 +3230,58 @@
 
   async function toggleTaskDone() {
     showToast('任务从禅道只读同步，请到禅道完成任务。', 'warn');
+  }
+
+  async function mutateLocalTask(id, patch, message) {
+    try {
+      const data = await apiRequest(`/api/tasks/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: patch
+      });
+      await pullData({ silent: true });
+      if (message) showToast(message);
+      return data.task;
+    } catch (error) {
+      showToast(error.message, 'error');
+      return null;
+    }
+  }
+
+  async function toggleTaskPin(id) {
+    const task = taskById(id);
+    if (!task || !task.isLocal) return;
+    const pinned = !task.pinned;
+    const updated = await mutateLocalTask(id, { pinned }, pinned ? '任务已置顶。' : '已取消置顶。');
+    if (updated && ui.drawer) renderDrawer();
+  }
+
+  async function toggleLocalTaskDone(id) {
+    const task = taskById(id);
+    if (!task || !task.isLocal) return;
+    const status = task.status === 'done' ? 'todo' : 'done';
+    const updated = await mutateLocalTask(id, { status }, status === 'done' ? '任务已完成。' : '任务已重新打开。');
+    if (updated && ui.drawer) renderDrawer();
+  }
+
+  async function deleteLocalTask(id) {
+    const task = taskById(id);
+    if (!task || !task.isLocal) return;
+    const ok = await confirmDialog({
+      title: '删除本地任务？',
+      subtitle: task.title,
+      message: '删除后无法恢复。该任务仅保存在 QDesk 本机，不会影响禅道数据。',
+      confirmText: '删除',
+      danger: true
+    });
+    if (!ok) return;
+    try {
+      await apiRequest(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      if (ui.drawer) closeDrawer();
+      await pullData({ silent: true });
+      showToast('本地任务已删除。');
+    } catch (error) {
+      showToast(error.message, 'error');
+    }
   }
 
   async function changeTaskStatus() {
@@ -3718,11 +3880,26 @@
     if (action === 'bug-action') { openBugAction(actionEl.dataset.bugAction, actionEl.dataset.id); return; }
     if (action === 'close-drawer') { closeDrawer(); return; }
     if (action === 'close-modal') { closeModal(); return; }
-    if (action === 'edit-task') { showToast('任务从禅道只读同步，请到禅道编辑。', 'warn'); return; }
+    if (action === 'edit-task') {
+      const task = taskById(actionEl.dataset.id);
+      if (task && task.isLocal) openTaskModal(task);
+      else showToast('任务从禅道只读同步，请到禅道编辑。', 'warn');
+      return;
+    }
+    if (action === 'edit-local-task') {
+      const task = taskById(actionEl.dataset.id);
+      if (!task || !task.isLocal) return;
+      if (ui.drawer) closeDrawer();
+      openTaskModal(task);
+      return;
+    }
     if (action === 'edit-bug') { const bug = bugById(actionEl.dataset.id); if (bug) openBugEdit(bug.id); return; }
     if (action === 'delete-task') { deleteTask(); return; }
+    if (action === 'delete-local-task') { deleteLocalTask(actionEl.dataset.id); return; }
     if (action === 'delete-bug') { deleteBug(); return; }
     if (action === 'toggle-task-done') { toggleTaskDone(); return; }
+    if (action === 'toggle-task-pin') { toggleTaskPin(actionEl.dataset.id); return; }
+    if (action === 'toggle-local-task-done') { toggleLocalTaskDone(actionEl.dataset.id); return; }
     if (action === 'add-task-status') { openTaskModal(); return; }
     if (action === 'kpi-tasks') {
       ui.taskScope = 'mine';

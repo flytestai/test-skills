@@ -122,6 +122,15 @@ test('筛选器支持关键词、优先级、项目和逾期条件', () => {
   assert.ok(unclosed.length < state.bugs.length);
 });
 
+test('filterTasks 置顶任务始终排在普通任务之前', () => {
+  const tasks = [
+    { id: 'T-1', title: '普通高优任务', status: 'doing', priority: 'P0', pinned: false, updatedAt: '2026-10-29T10:00:00.000Z', tags: [] },
+    { id: 'T-2', title: '置顶低优任务', status: 'todo', priority: 'P3', pinned: true, updatedAt: '2026-10-28T10:00:00.000Z', tags: [] }
+  ];
+  const sorted = Core.filterTasks(tasks, {});
+  assert.deepEqual(sorted.map((task) => task.id), ['T-2', 'T-1']);
+});
+
 test('filterBugs 支持按发版版本与待验证/未关闭口径筛选', () => {
   const bugs = [
     { id: 'B-1', version: 'PC2.9.0版本', status: 'verifying', isMine: true, needsMyVerification: true },

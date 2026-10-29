@@ -10,7 +10,8 @@
 - 「当日进度」综合进度：只统计当天我名下待验证 Bug 和待完成任务；待发版版本与版本就绪度单独展示，不计入综合百分比，旧版本不会重复计入。
 - 发版管理：从禅道同步的执行与 Bug 版本字段自动汇总版本，可为每个版本设置测试开始/结束时间并手动关闭/重新开启；点击版本卡片中的待验证/未关闭 Bug 数量可直接跳到按版本筛选的 Bug 列表。工作台只展示已设置测试时间的版本，并同步显示测试窗口与「测试中」状态，测试时间与关闭状态均为本机独立记录。
 - 「今日待验证」指标卡：列出我名下全部未验证 Bug，不限新增日期，点击单条直接打开对应 Bug 详情。
-- 任务按项目归类：我的任务 / 测试任务 / 全部任务。
+- 任务按项目归类：我的任务 / 测试任务 / 全部任务；支持在页面手动新建本地任务，填写标题、内容、开始 / 结束时间、优先级和置顶，也可通过 `scripts/add-task.mjs` 创建。
+- 本地任务保存在 QDesk 本机，参与任务看板 / 列表、时间筛选和工作台统计，但不会写入禅道；支持编辑、完成、重新打开、删除和置顶。
 - Bug 支持按创建时间、更新时间升序 / 降序，默认更新时间从新到旧。
 - 后端快照缓存 + 后台静默同步，页面打开不等待禅道 CLI；工作日 08:30–18:00 每 30 分钟自动全量同步，周末与窗口外仅手动触发。
 - 可创建正式 Bug（需用户明确授权），支持严重程度、优先级、指派、复现步骤。
@@ -20,7 +21,7 @@
 
 ## 安全边界
 
-- 已有任务只读；Bug 写操作只允许针对 `assignedTo` 为当前账号的记录。
+- 禅道已有任务只读；本地任务只写入 QDesk，不产生禅道写入。Bug 写操作只允许针对 `assignedTo` 为当前账号的记录。
 - 我提交但已指派给他人的 Bug 不能修改；已关闭 Bug 的 `assignedTo` 会变成 `closed`，归属必须在关闭前确认。
 - 批量关闭前必须先只读生成清单并让用户确认，只关闭清单内的 ID；默认超过 100 条会拦截。
 - 每次写入后逐条复核状态和指派人，分别报告成功、失败、跳过项。
@@ -67,6 +68,7 @@ qa-workbench/
 ├── SKILL.md
 ├── agents/openai.yaml
 ├── scripts/install_workbench.mjs
+├── scripts/add-task.mjs
 ├── references/
 │   ├── configuration.md
 │   ├── api-and-data.md
@@ -80,6 +82,7 @@ qa-workbench/
 Use $qa-workbench to deploy a local ZenTao QA workbench for my account.
 Use $qa-workbench to set up the workbench and verify background sync.
 Use $qa-workbench to explain how product/project grouping and Bug sorting work.
+Use $qa-workbench to add a local task for regression testing, priority P1 and pin it.
 ```
 
 详细操作见 `SKILL.md`。

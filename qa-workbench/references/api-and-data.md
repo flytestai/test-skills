@@ -26,7 +26,10 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | POST | `/api/bugs/:id/activate` | Re-activate the Bug with build, assignee and comment |
 | POST | `/api/bugs/:id/confirm` | Confirm the Bug (ZenTao 22.5+ only) |
 | POST | `/api/bugs/:id/delete` | Delete the Bug through the CLI (`--yes`) |
-| GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats |
+| GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats, including merged local tasks |
+| POST | `/api/tasks` | Create a local QDesk task; never writes to ZenTao |
+| PATCH | `/api/tasks/:id` | Update a local task's fields, status or pin flag |
+| DELETE | `/api/tasks/:id` | Delete a local task (`LT-…` only) |
 | GET | `/api/releases` | Release catalog merged with local test windows, pinning and priorities, plus saved `releasePlans` |
 | POST | `/api/releases` | Set or clear one version's test start/end time, pin flag or P1–P3 priority; does not write to ZenTao |
 | GET | `/api/reports` | Stored daily reports |
@@ -73,6 +76,35 @@ Release records are derived from synchronized ZenTao data; no build or release w
 
 The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions do not add a new queue item, and locally `closed` versions are removed from the dashboard queue entirely. The dashboard `发版：…` line only includes versions whose `testStart` or `testEnd` is set.
 
+## Local tasks
+
+The 任务管理 page can create local tasks. They are stored only in `data/app-data.json`, merged into the response-time snapshot, and never written to ZenTao.
+
+`POST /api/tasks` payload:
+
+```json
+{
+  "title": "回归验证登录流程",
+  "description": "覆盖账号密码与验证码登录",
+  "startAt": "2026-10-30T09:00",
+  "endAt": "2026-10-30T18:00",
+  "priority": "P1",
+  "pinned": true
+}
+```
+
+- `title`: required, maximum 160 characters.
+- `description`: optional, maximum 4000 characters.
+- `startAt` / `endAt`: optional local `YYYY-MM-DDTHH:mm` values; a date-only value is treated as `T00:00`.
+- `priority`: `P0`, `P1`, `P2` or `P3`; default `P2`.
+- `pinned`: optional local flag; pinned tasks sort before non-pinned tasks.
+- `status`: optional for create (`todo` default); `PATCH` accepts `todo`, `doing`, `blocked`, `done`.
+- `endAt` must not be earlier than `startAt`.
+- The server generates an ID such as `LT-1001`; `PATCH` and `DELETE` only accept local IDs.
+- A created task receives `isLocal: true`, `isMine: true`, `project: "本地任务"` and a derived `dueDate` from `endAt`.
+
+The created task is included in `/api/bootstrap`, `/api/tasks`, task scope counts, the project chip for 本地任务, daily report data and dashboard/date logic. `POST`, `PATCH` and `DELETE` increment `revision` so the browser refreshes without a ZenTao sync. Use `scripts/add-task.mjs` from the skill as a CLI wrapper.
+
 ## Health example
 
 ```bash
@@ -117,7 +149,22 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
   "tester": { "account": "...", "name": "..." },
   "products": [{ "id": "...", "name": "...", "bugCount": 0, "openBugs": 0 }],
   "projectList": [{ "id": "...", "name": "...", "taskCount": 0, "myTasks": 0 }],
-  "tasks": [],
+  "tasks": [
+    {
+      "id": "LT-1001",
+      "title": "回归验证登录流程",
+      "description": "覆盖账号密码与验证码登录",
+      "priority": "P1",
+      "status": "todo",
+      "startAt": "2026-10-30T09:00",
+      "endAt": "2026-10-30T18:00",
+      "dueDate": "2026-10-30",
+      "pinned": true,
+      "isLocal": true,
+      "isMine": true,
+      "project": "本地任务"
+    }
+  ],
   "bugs": [],
   "bugStats": {},
   "bugScopeStats": { "opened": {}, "assigned": {}, "autojob": {}, "all": {} },
@@ -238,7 +285,7 @@ Task scope semantics:
 
 | File | Contents | Sensitive |
 | --- | --- | --- |
-| `data/app-data.json` | reports, release test windows / pinning / priorities, display profile, UI preferences | moderate |
+| `data/app-data.json` | reports, local tasks, release test windows / pinning / priorities, display profile, UI preferences | moderate |
 | `data/zentao-auth.json` | URL, account, plaintext local password, display name, version 2 schema | **yes** |
 | `data/snapshot-cache.json` | full last successful snapshot, including tasks and Bugs | **yes** |
 | `data/qdesk-autostart.log` | autostart stdout/stderr | low |
@@ -255,7 +302,7 @@ All JSON files use temporary files plus atomic rename. Corrupt files are moved t
 - Errors are sanitized by replacing the password with a placeholder.
 - Credentials are passed to the CLI through a child-process environment, not shell interpolation.
 - Static whitelist, CSP, `X-Frame-Options: DENY`, same-origin checks and body-size limits are enabled.
-- Existing ZenTao tasks are read-only. Existing Bugs can be updated, assigned, resolved, closed, activated, confirmed (22.5+) and deleted through the ZenTao CLI only when `assignedTo` is the current account.
+- Existing ZenTao tasks are read-only. Local QDesk tasks (`LT-…`, `isLocal: true`) can be created, edited, completed and deleted locally without any ZenTao write. Existing Bugs can be updated, assigned, resolved, closed, activated, confirmed (22.5+) and deleted through the ZenTao CLI only when `assignedTo` is the current account.
 - Batch close requires a read-only confirmation list and explicit user approval; only the confirmed IDs may be processed. See `references/safety.md`.
 - After every write, re-read the affected Bug and report success, failure, and skipped items separately.
 

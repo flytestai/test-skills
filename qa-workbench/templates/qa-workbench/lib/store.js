@@ -5,12 +5,35 @@ const path = require('node:path');
 
 const REPORT_FIELDS = ['summary', 'done', 'bugs', 'ongoing', 'next', 'risks'];
 const RELEASE_PRIORITIES = ['P1', 'P2', 'P3'];
+const TASK_PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
+const LOCAL_TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'];
 const VIEWS = new Set(['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings']);
 const TASK_SCOPES = new Set(['mine', 'test']);
 const BUG_SCOPES = new Set(['opened', 'assigned', 'all']);
 
 function text(value, maxLength) {
   return String(value == null ? '' : value).slice(0, maxLength || 6000);
+}
+
+function badRequest(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
+function boolValue(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function normalizeTaskDateTime(value, label) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const candidate = /^\d{4}-\d{2}-\d{2}$/.test(raw) ? `${raw}T00:00` : raw;
+  const match = candidate.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
+  if (!match || Number.isNaN(new Date(match[1]).getTime())) {
+    throw badRequest(`${label || '任务时间'}格式无效，请使用日期和时间。`);
+  }
+  return match[1];
 }
 
 function isDate(value) {
@@ -86,6 +109,99 @@ function normalizeReleasePlans(raw) {
   return plans;
 }
 
+function normalizeLocalTaskRecord(raw, fallbackId) {
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const title = text(input.title, 160).trim();
+  if (!title) throw badRequest('任务标题不能为空。');
+  const startAt = normalizeTaskDateTime(input.startAt, '任务开始时间');
+  const endAt = normalizeTaskDateTime(input.endAt, '任务结束时间');
+  if (startAt && endAt && endAt < startAt) throw badRequest('任务结束时间不能早于开始时间。');
+  const priority = String(input.priority || 'P2').trim().toUpperCase();
+  if (!TASK_PRIORITIES.includes(priority)) throw badRequest('任务优先级无效，请选择 P0、P1、P2 或 P3。');
+  const statusInput = String(input.status || 'todo');
+  if (!LOCAL_TASK_STATUSES.includes(statusInput)) throw badRequest('任务状态无效。');
+  const idRaw = String(input.id || '');
+  const id = /^LT-\d{1,12}$/.test(idRaw) ? idRaw : fallbackId;
+  const now = new Date().toISOString();
+  const createdAt = input.createdAt && !Number.isNaN(new Date(input.createdAt).getTime())
+    ? new Date(input.createdAt).toISOString()
+    : now;
+  const updatedAt = input.updatedAt && !Number.isNaN(new Date(input.updatedAt).getTime())
+    ? new Date(input.updatedAt).toISOString()
+    : createdAt;
+  const status = statusInput;
+  const completedAt = status === 'done'
+    ? (input.completedAt && !Number.isNaN(new Date(input.completedAt).getTime())
+      ? new Date(input.completedAt).toISOString()
+      : now)
+    : null;
+  const history = Array.isArray(input.history)
+    ? input.history
+      .filter((item) => item && item.at)
+      .map((item) => {
+        const at = new Date(item.at);
+        return {
+          at: Number.isNaN(at.getTime()) ? '' : at.toISOString(),
+          text: text(item.text, 200)
+        };
+      })
+      .filter((item) => item.at)
+      .slice(0, 50)
+    : [];
+  return {
+    id,
+    title,
+    description: text(input.description, 4000),
+    type: '其他',
+    priority,
+    status,
+    project: '本地任务',
+    module: '',
+    startAt,
+    endAt,
+    dueDate: endAt ? endAt.slice(0, 10) : '',
+    estimate: 0,
+    tags: [],
+    bugIds: [],
+    assignee: '我',
+    isMine: true,
+    isTest: false,
+    isLocal: true,
+    pinned: boolValue(input.pinned),
+    createdAt,
+    updatedAt,
+    completedAt,
+    history
+  };
+}
+
+function normalizeLocalTasks(raw) {
+  const input = Array.isArray(raw) ? raw : [];
+  const seen = new Set();
+  const tasks = [];
+  input.forEach((item, index) => {
+    try {
+      let task = normalizeLocalTaskRecord(item, `LT-${1001 + index}`);
+      if (seen.has(task.id)) task = normalizeLocalTaskRecord(Object.assign({}, item, { id: '' }), `LT-${1001 + index}`);
+      if (seen.has(task.id)) return;
+      seen.add(task.id);
+      tasks.push(task);
+    } catch (error) {
+      // Ignore invalid local tasks instead of blocking the store.
+    }
+  });
+  return tasks;
+}
+
+function nextLocalTaskId(tasks) {
+  let max = 1000;
+  (tasks || []).forEach((task) => {
+    const match = String(task && task.id || '').match(/^LT-(\d+)$/);
+    if (match) max = Math.max(max, Number(match[1]));
+  });
+  return `LT-${max + 1}`;
+}
+
 function defaultData() {
   return {
     version: 2,
@@ -103,6 +219,7 @@ function defaultData() {
     },
     reports: [],
     releasePlans: {},
+    localTasks: [],
     updatedAt: new Date().toISOString()
   };
 }
@@ -207,6 +324,7 @@ class Store {
       settings,
       reports: Array.from(deduped.values()).sort((a, b) => b.date.localeCompare(a.date)),
       releasePlans: normalizeReleasePlans(input.releasePlans),
+      localTasks: normalizeLocalTasks(input.localTasks),
       updatedAt: input.updatedAt || new Date().toISOString()
     };
   }
@@ -240,6 +358,75 @@ class Store {
 
   getReleasePlans() {
     return Object.assign({}, this.data.releasePlans);
+  }
+
+  getLocalTasks() {
+    return this.data.localTasks.map((task) => Object.assign({}, task, {
+      history: (task.history || []).map((item) => Object.assign({}, item))
+    }));
+  }
+
+  createLocalTask(raw) {
+    const now = new Date().toISOString();
+    const id = nextLocalTaskId(this.data.localTasks);
+    const task = normalizeLocalTaskRecord(Object.assign({}, raw, {
+      id,
+      createdAt: now,
+      updatedAt: now,
+      completedAt: null,
+      history: [{ at: now, text: '创建了本地任务' }]
+    }), id);
+    this.data.localTasks.push(task);
+    this.save();
+    return Object.assign({}, task, { history: task.history.map((item) => Object.assign({}, item)) });
+  }
+
+  updateLocalTask(id, raw) {
+    const index = this.data.localTasks.findIndex((task) => task.id === id);
+    if (index < 0) {
+      const error = new Error('本地任务不存在。');
+      error.status = 404;
+      throw error;
+    }
+    const input = raw && typeof raw === 'object' ? raw : {};
+    const has = (key) => Object.prototype.hasOwnProperty.call(input, key);
+    const existing = this.data.localTasks[index];
+    const merged = Object.assign({}, existing, input, { id: existing.id });
+    const statusChanged = has('status') && input.status !== existing.status;
+    const updated = [
+      'title', 'description', 'startAt', 'endAt', 'priority', 'pinned'
+    ].some((key) => has(key) && String(input[key] == null ? '' : input[key]) !== String(existing[key] == null ? '' : existing[key]));
+    const now = new Date().toISOString();
+    const history = (existing.history || []).slice();
+    if (statusChanged) {
+      const statusLabels = { todo: '待开始', doing: '进行中', blocked: '已阻塞', done: '已完成' };
+      history.unshift({
+        at: now,
+        text: input.status === 'done'
+          ? '完成了本地任务'
+          : `状态由「${statusLabels[existing.status] || existing.status}」变更为「${statusLabels[input.status] || input.status}」`
+      });
+    } else if (updated) {
+      history.unshift({ at: now, text: '更新了本地任务信息' });
+    }
+    merged.updatedAt = now;
+    merged.history = history.slice(0, 50);
+    const task = normalizeLocalTaskRecord(merged, existing.id);
+    this.data.localTasks[index] = task;
+    this.save();
+    return Object.assign({}, task, { history: task.history.map((item) => Object.assign({}, item)) });
+  }
+
+  deleteLocalTask(id) {
+    const index = this.data.localTasks.findIndex((task) => task.id === id);
+    if (index < 0) {
+      const error = new Error('本地任务不存在。');
+      error.status = 404;
+      throw error;
+    }
+    this.data.localTasks.splice(index, 1);
+    this.save();
+    return true;
   }
 
   updateReleasePlan(raw) {
@@ -278,7 +465,8 @@ class Store {
     return {
       settings: this.data.settings,
       reports: this.getReports(),
-      releasePlans: this.getReleasePlans()
+      releasePlans: this.getReleasePlans(),
+      localTasks: this.getLocalTasks()
     };
   }
 }
@@ -290,7 +478,10 @@ module.exports = {
   normalizeSettings,
   normalizeReleasePlan,
   normalizeReleasePlans,
+  normalizeLocalTaskRecord,
+  normalizeLocalTasks,
   RELEASE_PRIORITIES,
+  TASK_PRIORITIES,
   REPORT_FIELDS,
   VIEWS
 };

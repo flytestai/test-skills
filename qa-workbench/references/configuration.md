@@ -167,6 +167,36 @@ This intentionally avoids the ZenTao 22.4 unsupported `my tasks`, `my bugs`, `bu
 - The customer-feedback scan is cached for 15 minutes independently of the main snapshot. A manual sync (`force`) refreshes it; normal page refreshes reuse the cache.
 - Scanning all products for `browseType=all` is the slowest part of the first sync. Set `watch.productIds` to the products that actually receive AI customer-service Bugs (for example `[53, 55]`) to shorten it.
 
+## Local tasks
+
+Manual tasks created from 任务管理 or `scripts/add-task.mjs` are stored in `data/app-data.json`:
+
+```json
+{
+  "localTasks": [
+    {
+      "id": "LT-1001",
+      "title": "回归验证登录流程",
+      "description": "覆盖账号密码与验证码登录",
+      "priority": "P1",
+      "status": "todo",
+      "startAt": "2026-10-30T09:00",
+      "endAt": "2026-10-30T18:00",
+      "pinned": true,
+      "isLocal": true,
+      "isMine": true,
+      "project": "本地任务"
+    }
+  ]
+}
+```
+
+- Local tasks are merged into the snapshot at response time with `isLocal: true`; they are never added to `data/snapshot-cache.json` and never written to ZenTao.
+- `startAt` / `endAt` use local `YYYY-MM-DDTHH:mm`; `priority` is `P0`–`P3`; `pinned` sorts before non-pinned tasks.
+- `status` accepts `todo`, `doing`, `blocked` and `done`. Completing a task fills `completedAt`; reopening clears it.
+- They appear in task scopes, project chips, due filters, daily reports and dashboard calculations. The synthetic project name is 本地任务.
+- Delete `data/app-data.json` only after confirming with the user; it also removes reports and release plans.
+
 ## Customizing module names
 
 If the ZenTao server does not expose module names through the CLI, add a mapping:

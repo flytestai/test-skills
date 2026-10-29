@@ -946,11 +946,45 @@ function currentSyncState() {
   };
 }
 
+function mergeLocalTaskData(base) {
+  const localTasks = store.getLocalTasks();
+  if (!localTasks.length) return base;
+  const tasks = localTasks.concat(base.tasks || []);
+  const mine = tasks.filter((task) => task.isMine);
+  const test = tasks.filter((task) => task.isTest);
+  const projectList = (base.projectList || []).slice();
+  const localGroup = {
+    id: 'local-tasks',
+    name: '本地任务',
+    status: 'local',
+    taskCount: localTasks.length,
+    myTasks: localTasks.filter((task) => task.status !== 'done').length
+  };
+  const existing = projectList.findIndex((project) => project.name === '本地任务');
+  if (existing >= 0) projectList[existing] = Object.assign({}, projectList[existing], localGroup);
+  else projectList.push(localGroup);
+  return {
+    ...base,
+    tasks,
+    projectList,
+    taskStats: {
+      all: buildTaskStats(tasks),
+      mine: buildTaskStats(mine),
+      test: buildTaskStats(test)
+    },
+    scopeCounts: {
+      ...(base.scopeCounts || {}),
+      tasks: { mine: mine.length, test: test.length, all: tasks.length }
+    }
+  };
+}
+
 function decorateSnapshot(base) {
   const latest = store.snapshot();
   const settings = latest.settings;
   const releasePlans = latest.releasePlans || store.getReleasePlans();
-  const releases = Core.releaseCatalog({ tasks: base.tasks || [], bugs: base.bugs || [] }, releasePlans);
+  const merged = mergeLocalTaskData(base);
+  const releases = Core.releaseCatalog({ tasks: merged.tasks || [], bugs: merged.bugs || [] }, releasePlans);
   const profile = {
     ...base.profile,
     role: settings.profile.role,
@@ -959,14 +993,14 @@ function decorateSnapshot(base) {
   };
   const zentao = base.zentao || {};
   return {
-    ...base,
+    ...merged,
     settings,
     profile,
     reports: latest.reports,
     releasePlans,
     releases,
     products: base.products || [],
-    projectList: base.projectList || [],
+    projectList: merged.projectList || [],
     projects: base.projects || [],
     zentao: {
       ...zentao,
@@ -985,7 +1019,7 @@ function emptySnapshot() {
     name: '禅道产品'
   };
   const emptyStats = buildBugStats([]);
-  return {
+  return mergeLocalTaskData({
     app: { name: 'QDesk · 测试工作台', version: '2.1.0', mode: 'zentao' },
     tester: { account, name: testerName },
     profile: {
@@ -1070,7 +1104,7 @@ function emptySnapshot() {
       }
     },
     generatedAt: null
-  };
+  });
 }
 
 const SYNC_TIMEOUT_MS = 15 * 60 * 1000;
@@ -2075,6 +2109,42 @@ async function handleApi(req, res, url) {
         stats: buildTaskStats(tasks)
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/tasks' && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const body = await readJsonBody(req, 64 * 1024);
+    const task = store.createLocalTask(body);
+    snapshotRevision += 1;
+    sendJson(res, 200, { ok: true, data: { task, revision: snapshotRevision } });
+    return;
+  }
+
+  const localTaskMatch = pathname.match(/^\/api\/tasks\/(LT-\d{1,12})$/);
+  if (localTaskMatch && req.method === 'PATCH') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const body = await readJsonBody(req, 64 * 1024);
+    const task = store.updateLocalTask(localTaskMatch[1], body);
+    snapshotRevision += 1;
+    sendJson(res, 200, { ok: true, data: { task, revision: snapshotRevision } });
+    return;
+  }
+
+  if (localTaskMatch && req.method === 'DELETE') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    store.deleteLocalTask(localTaskMatch[1]);
+    snapshotRevision += 1;
+    sendJson(res, 200, { ok: true, data: { removed: true, revision: snapshotRevision } });
     return;
   }
 

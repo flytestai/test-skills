@@ -616,6 +616,7 @@
   }
 
   function compareTasks(a, b) {
+    if (Boolean(b.pinned) !== Boolean(a.pinned)) return b.pinned ? 1 : -1;
     const statusA = TASK_STATUS[a.status] ? TASK_STATUS[a.status].order : 9;
     const statusB = TASK_STATUS[b.status] ? TASK_STATUS[b.status].order : 9;
     if (statusA !== statusB) return statusA - statusB;
