@@ -462,6 +462,9 @@
   }
 
   function bugStatusLabel(bug) {
+    if (bug && bug.isAutojob && bug.rawStatus === 'active' && bug.autojobRelation === 'assigned') {
+      return '待验证';
+    }
     if (bug && bug.status === 'verifying' && bug.needsMyVerification === false && bug.autojobRelation === 'resolved') {
       return '我已解决';
     }
@@ -631,10 +634,10 @@
       <div class="autojob-copy">
         <div class="autojob-kicker"><span class="live-dot"></span>客服群聊 · AI 自动提取 · 每日关注</div>
         <h2>${esc(account)} 指派给我的客户反馈</h2>
-        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理未解决与 P0/P1，已解决项等待客服或提交人确认。</p>
+        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理待验证与 P0/P1，已解决项等待客服或提交人确认。</p>
       </div>
       <div class="autojob-numbers">
-        <div><strong>${stats.active || 0}</strong><span>未解决</span></div>
+        <div><strong>${stats.active || 0}</strong><span>待验证</span></div>
         <div><strong>${stats.resolvedByMe || 0}</strong><span>我已解决</span></div>
         <div><strong>${stats.closed || 0}</strong><span>已关闭</span></div>
         <div class="${stats.highPriorityOpen ? 'is-warn' : ''}"><strong>${stats.highPriorityOpen || 0}</strong><span>P0/P1 未关闭</span></div>
@@ -660,10 +663,10 @@
             <span title="禅道优先级">${severityBadge(bug.pri)}</span>
             <span class="autojob-row-main">
               <strong>${esc(bug.title)}</strong>
-              <small>${esc(bug.project)}<span class="sep"></span>${esc(bug.statusLabel)}<span class="sep"></span>${esc(Core.relativeDay(String(bug.createdAt || '').slice(0, 10), today))}</small>
+              <small>${esc(bug.project)}<span class="sep"></span>${esc(bugStatusLabel(bug))}<span class="sep"></span>${esc(Core.relativeDay(String(bug.createdAt || '').slice(0, 10), today))}</small>
             </span>
             <span class="autojob-row-meta">
-              ${bug.autojobRelation === 'assigned' ? '<span class="source-badge">待我处理</span>' : '<span class="source-badge is-soft">我已解决</span>'}
+              ${bug.autojobRelation === 'assigned' ? '<span class="source-badge">待验证</span>' : '<span class="source-badge is-soft">我已解决</span>'}
               ${icon('chevron-right')}
             </span>
           </button>`).join('') : `
@@ -1113,7 +1116,7 @@
       total: rows.length,
       open: open.length,
       closed: rows.filter((bug) => bug.status === 'closed').length,
-      verifying: rows.filter((bug) => bug.status === 'verifying' && bug.needsMyVerification !== false).length,
+      verifying: rows.filter((bug) => bugStatusLabel(bug) === '待验证').length,
       severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
       foundToday: rows.filter((bug) => Core.localDate(bug.createdAt) === today).length,
       status: group((bug) => bugStatusLabel(bug)),
@@ -1302,7 +1305,9 @@
           <option value="all">全部状态</option>
           <option value="unclosed"${f.status === 'unclosed' ? ' selected' : ''}>未关闭</option>
           ${Object.keys(Core.BUG_STATUS).map((key) => {
-            const label = key === 'verifying' && ui.bugScope === 'autojob' ? '我已解决' : Core.BUG_STATUS[key].label;
+            let label = Core.BUG_STATUS[key].label;
+            if (ui.bugScope === 'autojob' && key === 'new') label = '待验证';
+            if (ui.bugScope === 'autojob' && key === 'verifying') label = '我已解决';
             return `<option value="${key}"${f.status === key ? ' selected' : ''}>${label}</option>`;
           }).join('')}
         </select>
@@ -2568,7 +2573,7 @@
       items.push({
         type: 'autojob',
         id: '',
-        title: `客服反馈还有 ${autojob.active} 条未解决`,
+        title: `客服反馈还有 ${autojob.active} 条待验证`,
         meta: `${autojob.highPriorityOpen ? `${autojob.highPriorityOpen} 条 P0/P1 · ` : ''}AI 从客服群聊提取`,
         color: '#e95366',
         weight: 0

@@ -121,6 +121,8 @@ Customer-feedback summary semantics:
 - `closed`: `rawStatus = closed`.
 - `highPriorityOpen`: open items whose ZenTao priority (`pri`) is P0 or P1. AI customer-service Bugs often use severity P3 while carrying the real priority in `pri`; the dashboard ranks by priority.
 
+UI labels in the customer-feedback scope: autojob `active` Bugs assigned to me are shown as `待验证` (need triage), resolved-by-me Bugs as `我已解决`, and `closed` as `已关闭`.
+
 Task scope semantics:
 
 - `mine`: assigned to the configured account.
