@@ -668,27 +668,6 @@
       });
   }
 
-  function autojobBanner() {
-    const info = state.autojob;
-    if (!info || !info.enabled) return '';
-    const stats = state.autojobStats || {};
-    const account = (info.accounts && info.accounts[0]) || 'autojob';
-    return `<section class="autojob-banner" aria-label="客服反馈概览">
-      <span class="autojob-mark">${icon('message')}</span>
-      <div class="autojob-copy">
-        <h2>${esc(account)} 指派给我的客户反馈</h2>
-        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理待验证与 P0/P1，已解决项等待客服或提交人确认。</p>
-      </div>
-      <div class="autojob-numbers">
-        <div><strong>${stats.active || 0}</strong><span>待验证</span></div>
-        <div><strong>${stats.resolvedByMe || 0}</strong><span>我已解决</span></div>
-        <div><strong>${stats.closed || 0}</strong><span>已关闭</span></div>
-        <div class="${stats.highPriorityOpen ? 'is-warn' : ''}"><strong>${stats.highPriorityOpen || 0}</strong><span>P0/P1 未关闭</span></div>
-      </div>
-      <button class="btn btn-primary autojob-cta" type="button" data-action="open-autojob">查看队列 ${icon('arrow-right')}</button>
-    </section>`;
-  }
-
   function autojobPanel() {
     const info = state.autojob;
     if (!info || !info.enabled) return '';
@@ -828,8 +807,6 @@
           </div>
         </div>
       </section>
-
-      ${autojobBanner()}
 
       <section class="kpi-grid" aria-label="工作概览">
         <article class="kpi-card kpi-pending" aria-label="今日待验证 Bug">
