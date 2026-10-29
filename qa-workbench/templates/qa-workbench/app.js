@@ -775,23 +775,23 @@
           </div>
         </div>
         <div class="hero-progress-wrap">
-          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="今日推进综合进度 ${dailyFocus.progress}%">
+          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%">
             <div class="focus-ring-inner">
               <strong>${dailyFocus.progress}<span>%</span></strong>
-              <small>今日推进</small>
+              <small>当日进度</small>
             </div>
           </div>
           <div class="hero-progress-meta">
             <strong>${dailyFocus.completedCount} / ${dailyFocus.plannedCount} 项已推进</strong>
             <span>待验证 ${dailyFocus.bugs.pending} 个 · 待发版 ${dailyFocus.versions.pending} 个 · 待完成 ${dailyFocus.tasks.pending} 项</span>
             ${dailyFocus.versions.pending ? `<span class="focus-version-names" title="${esc(versionNames || '')}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
-            <div class="focus-breakdown" aria-label="今日推进构成">
+            <div class="focus-breakdown" aria-label="当日进度构成">
               <div class="focus-breakdown-row">
                 <span class="focus-breakdown-label">Bug 验证</span>
                 <span class="focus-breakdown-track"><b style="width:${dailyFocus.bugs.progress}%"></b></span>
                 <span class="focus-breakdown-value">${dailyFocus.bugs.doneToday}/${dailyFocus.bugs.total}</span>
               </div>
-              <div class="focus-breakdown-row" title="版本就绪度仅展示，不计入今日推进综合进度">
+              <div class="focus-breakdown-row" title="版本就绪度仅展示，不计入当日进度">
                 <span class="focus-breakdown-label">版本就绪</span>
                 <span class="focus-breakdown-track is-version"><b style="width:${dailyFocus.versions.progress}%"></b></span>
                 <span class="focus-breakdown-value">${dailyFocus.versions.progress}%</span>

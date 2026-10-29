@@ -660,7 +660,7 @@
     return total ? Math.round((done / total) * 100) : 0;
   }
 
-  // 今日推进 = 待我验证的 Bug + 待发版版本 + 我今天要完成的任务。
+  // 当日进度 = 待我验证的 Bug + 待发版版本 + 我今天要完成的任务。
   function dailyFocus(state, date) {
     const day = date || localDate();
     const tasks = (state && state.tasks) || [];
