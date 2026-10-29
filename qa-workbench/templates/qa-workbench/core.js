@@ -640,6 +640,159 @@
     return bug.status !== 'closed';
   }
 
+  function needsMyVerification(bug) {
+    if (!bug) return false;
+    if (bug.needsMyVerification === true) return true;
+    if (bug.isAutojob && bug.rawStatus === 'active' && bug.autojobRelation === 'assigned') return true;
+    // Demo/local records do not carry the ZenTao ownership flags yet.
+    if (bug.needsMyVerification === undefined && bug.status === 'verifying') return true;
+    return false;
+  }
+
+  function versionKey(value) {
+    const name = String(value == null ? '' : value).trim();
+    if (!name || /主干|trunk/i.test(name)) return '';
+    const match = name.match(/(\d+(?:\.\d+){1,3})/);
+    return match ? match[1] : '';
+  }
+
+  function versionProgress(done, total) {
+    return total ? Math.round((done / total) * 100) : 0;
+  }
+
+  // 今日推进 = 待我验证的 Bug + 待发版版本 + 我今天要完成的任务。
+  function dailyFocus(state, date) {
+    const day = date || localDate();
+    const tasks = (state && state.tasks) || [];
+    const bugs = (state && state.bugs) || [];
+    const account = String((state && state.tester && state.tester.account) || '');
+    const scopedTasks = tasks.some((task) => typeof task.isMine === 'boolean')
+      ? tasks.filter((task) => task.isMine)
+      : tasks;
+
+    const taskQueue = scopedTasks.filter((task) => task.status !== 'done' && (
+      task.status === 'doing'
+      || task.status === 'blocked'
+      || task.dueDate === day
+      || (task.dueDate && task.dueDate < day)
+    ));
+    const taskDoneToday = scopedTasks.filter((task) => task.completedAt && localDate(task.completedAt) === day);
+    const taskMap = new Map();
+    taskQueue.forEach((task) => taskMap.set(task.id, task));
+    taskDoneToday.forEach((task) => taskMap.set(task.id, task));
+    const taskItems = Array.from(taskMap.values());
+    const taskTotal = taskItems.length;
+    const taskDone = taskDoneToday.length;
+
+    const pendingBugs = bugs.filter(needsMyVerification);
+    const bugDoneToday = bugs.filter((bug) => bug.verifiedAt && localDate(bug.verifiedAt) === day && (
+      bug.isAssignedToMe
+      || bug.isMine
+      || bug.autojobRelation === 'closed'
+      || (account && bug.closedByAccount === account)
+    ));
+    const bugTotal = pendingBugs.length + bugDoneToday.length;
+    const bugDone = bugDoneToday.length;
+
+    const versions = new Map();
+    const ensureVersion = (key, project) => {
+      if (!key) return null;
+      let item = versions.get(key);
+      if (!item) {
+        item = { key, name: key, projects: new Set(), tasks: new Map(), pendingBugs: [], openBugs: [], doneBugs: [] };
+        versions.set(key, item);
+      }
+      if (project) item.projects.add(project);
+      return item;
+    };
+    tasks.forEach((task) => {
+      const item = ensureVersion(versionKey(task.execution), task.project);
+      if (item) item.tasks.set(task.id, task);
+    });
+    pendingBugs.forEach((bug) => {
+      const item = ensureVersion(versionKey(bug.version), bug.project);
+      if (item) item.pendingBugs.push(bug);
+    });
+    bugs.filter((bug) => bug.isMine && bug.status !== 'closed' && !needsMyVerification(bug)).forEach((bug) => {
+      const item = ensureVersion(versionKey(bug.version), bug.project);
+      if (item) item.openBugs.push(bug);
+    });
+    bugDoneToday.forEach((bug) => {
+      const item = ensureVersion(versionKey(bug.version), bug.project);
+      if (item) item.doneBugs.push(bug);
+    });
+
+    const releaseCutoff = addDays(day, -45);
+    const versionItems = [];
+    versions.forEach((item) => {
+      const allTasks = Array.from(item.tasks.values());
+      const doneTasks = allTasks.filter((task) => task.status === 'done').length;
+      const myOpenTasks = allTasks.filter((task) => task.status !== 'done' && (typeof task.isMine === 'boolean' ? task.isMine : true)).length;
+      const pendingCount = item.pendingBugs.length;
+      const openCount = item.openBugs.length;
+      if (!myOpenTasks && !pendingCount && !openCount) return;
+      // 仍有我提交的未关闭 Bug 或待我验证 Bug 的版本，按待发版处理；
+      // 只有历史遗留任务时，结束日期超过 45 天的旧版本不再计入。
+      const ends = allTasks.map((task) => task.executionEnd).filter(Boolean).sort();
+      const latestEnd = ends.length ? ends[ends.length - 1] : '';
+      if (!pendingCount && !openCount && latestEnd && latestEnd < releaseCutoff) return;
+      const totalUnits = allTasks.length + pendingCount + openCount + item.doneBugs.length;
+      const doneUnits = doneTasks + item.doneBugs.length;
+      versionItems.push({
+        key: item.key,
+        name: item.name,
+        projects: Array.from(item.projects),
+        taskTotal: allTasks.length,
+        taskDone: doneTasks,
+        myTaskOpen: myOpenTasks,
+        pendingBugs: pendingCount,
+        openBugs: openCount,
+        pending: myOpenTasks + pendingCount + openCount,
+        progress: versionProgress(doneUnits, totalUnits)
+      });
+    });
+    versionItems.sort((a, b) => (
+      b.pendingBugs - a.pendingBugs
+      || b.pending - a.pending
+      || a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
+    ));
+
+    const versionTotal = versionItems.length;
+    const versionReadiness = versionItems.reduce((sum, item) => sum + item.progress, 0) / 100;
+    const plannedCount = bugTotal + taskTotal + versionTotal;
+    const completedRaw = bugDone + taskDone + versionReadiness;
+    const progress = plannedCount ? Math.min(100, Math.round((completedRaw / plannedCount) * 100)) : 0;
+
+    return {
+      date: day,
+      tasks: {
+        total: taskTotal,
+        pending: taskQueue.length,
+        doneToday: taskDone,
+        progress: versionProgress(taskDone, taskTotal),
+        items: taskQueue
+      },
+      bugs: {
+        total: bugTotal,
+        pending: pendingBugs.length,
+        doneToday: bugDone,
+        progress: versionProgress(bugDone, bugTotal),
+        items: pendingBugs
+      },
+      versions: {
+        total: versionTotal,
+        pending: versionTotal,
+        doneToday: 0,
+        progress: versionTotal ? Math.round(versionReadiness * 100 / versionTotal) : 0,
+        items: versionItems
+      },
+      plannedCount,
+      completedCount: Math.round(completedRaw),
+      pendingTotal: plannedCount - Math.min(plannedCount, Math.round(completedRaw)),
+      progress
+    };
+  }
+
   function metrics(state, date) {
     const day = date || localDate();
     const tasks = state.tasks || [];
@@ -654,9 +807,7 @@
     const foundToday = bugs.filter((bug) => localDate(bug.createdAt) === day);
     const verifiedToday = bugs.filter((bug) => bug.verifiedAt && localDate(bug.verifiedAt) === day);
     const report = (state.reports || []).find((item) => item.date === day);
-    const plannedToday = openTasks.filter((task) => task.dueDate === day || task.status === 'doing');
-    const uniquePlanned = Array.from(new Map([...plannedToday, ...doneToday].map((task) => [task.id, task])).values());
-    const doneOnPlan = uniquePlanned.filter((task) => task.status === 'done').length;
+    const focus = dailyFocus(state, day);
 
     return {
       date: day,
@@ -673,9 +824,10 @@
       bugBlocked: openBugs.filter((bug) => bug.status === 'hold').length,
       reportStatus: report ? report.status : 'none',
       reportId: report ? report.id : '',
-      progress: uniquePlanned.length ? Math.round((doneOnPlan / uniquePlanned.length) * 100) : 0,
-      plannedCount: uniquePlanned.length,
-      completedCount: doneOnPlan
+      progress: focus.progress,
+      plannedCount: focus.plannedCount,
+      completedCount: focus.completedCount,
+      focus
     };
   }
 
@@ -1370,6 +1522,8 @@
     compareBugs,
     isTaskOverdue,
     isBugOpen,
+    needsMyVerification,
+    dailyFocus,
     metrics,
     statusCounts,
     severityCounts,

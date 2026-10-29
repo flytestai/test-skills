@@ -155,6 +155,14 @@ Customer-feedback summary semantics:
 
 UI labels in the customer-feedback scope: autojob `active` Bugs assigned to me are shown as `待验证` (need triage), resolved-by-me Bugs as `我已解决`, and `closed` as `已关闭`.
 
+The dashboard `今日推进` ring is computed client-side by `Core.dailyFocus(state, date)` and combines three queues:
+
+- pending verification Bugs (`needsMyVerification`, plus autojob `active` Bugs assigned to me);
+- versions awaiting release: versions with my pending or open Bugs, and recent executions (last 45 days) that still contain my unfinished tasks; versions whose only remaining work is stale historical tasks are ignored;
+- my unfinished tasks that are due today, overdue, or in progress.
+
+The ring mixes item counts with version readiness (completed tasks ÷ all tasks in that version); the three category rows show Bug verification, version readiness, and task completion separately.
+
 Task scope semantics:
 
 - `mine`: assigned to the configured account.

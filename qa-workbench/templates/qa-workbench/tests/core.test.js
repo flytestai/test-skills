@@ -220,3 +220,39 @@ test('extractAttachments returns unique ZenTao file references', () => {
   assert.equal(files[0].url, '/api/zentao/file/14533');
   assert.equal(files[1].alt, '放大');
 });
+
+test('dailyFocus 合并待验证 Bug、待发版版本与待完成任务的综合进度', () => {
+  const state = fixedState();
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.tasks.forEach((task) => { task.isMine = task.id !== 'T-1002'; });
+  state.tasks[0].execution = 'PC2.8.0版本';
+  state.tasks[1].execution = 'PC2.8.0版本';
+
+  state.bugs.forEach((bug) => { bug.needsMyVerification = false; });
+  const pending = state.bugs.find((bug) => bug.id === 'BUG-1184');
+  pending.needsMyVerification = true;
+  pending.isAssignedToMe = true;
+  pending.version = '3.8.2';
+
+  const verified = state.bugs.find((bug) => bug.id === 'BUG-1186');
+  verified.version = '3.8.2';
+  verified.verifiedAt = Core.dateAt(FIXED_DATE, 9, 30);
+  verified.closedAt = verified.verifiedAt;
+  verified.closedByAccount = 'weizhen';
+
+  const focus = Core.dailyFocus(state, FIXED_DATE);
+  assert.equal(focus.bugs.pending, 1);
+  assert.equal(focus.bugs.doneToday, 1);
+  assert.equal(focus.tasks.pending, 4);
+  assert.equal(focus.tasks.doneToday, 1);
+  assert.deepEqual(focus.versions.items.map((item) => item.name).sort(), ['2.8.0', '3.8.2']);
+  const version = focus.versions.items.find((item) => item.name === '3.8.2');
+  assert.equal(version.pendingBugs, 1);
+  assert.equal(version.progress, 50);
+  assert.equal(focus.plannedCount, 9);
+  assert.ok(focus.progress > 0 && focus.progress < 100);
+
+  const metrics = Core.metrics(state, FIXED_DATE);
+  assert.deepEqual(metrics.focus, focus);
+  assert.equal(metrics.progress, focus.progress);
+});

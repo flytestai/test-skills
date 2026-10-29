@@ -1167,8 +1167,9 @@ kbd {
 .hero-progress-meta {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  min-width: 105px;
+  gap: 6px;
+  min-width: 176px;
+  max-width: 210px;
 }
 
 .hero-progress-meta strong {
@@ -1196,6 +1197,66 @@ kbd {
   height: 100%;
   border-radius: inherit;
   background: #6edac7;
+}
+
+.hero-progress-meta .focus-version-names {
+  overflow: hidden;
+  color: #b9c6e4;
+  font-size: 9px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.focus-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 1px;
+}
+
+.focus-breakdown-row {
+  display: grid;
+  grid-template-columns: 62px minmax(42px, 1fr) 34px;
+  align-items: center;
+  gap: 6px;
+}
+
+.hero-progress-meta .focus-breakdown-label {
+  color: #aebcdd;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.focus-breakdown-track {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.focus-breakdown-track b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #ff8d7a;
+  transition: width 0.3s ease;
+}
+
+.focus-breakdown-track.is-version b {
+  background: #f3c05a;
+}
+
+.focus-breakdown-track.is-task b {
+  background: #6edac7;
+}
+
+.hero-progress-meta .focus-breakdown-value {
+  color: #dbe5fb;
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
 }
 
 .kpi-grid {
@@ -5485,8 +5546,9 @@ kbd {
 }
 
 .hero-progress-meta {
-  gap: 8px;
-  min-width: 132px;
+  gap: 7px;
+  min-width: 178px;
+  max-width: 224px;
 }
 
 .hero-progress-meta strong {

@@ -199,6 +199,7 @@
     state = {
       version: 2,
       profile: Object.assign({}, data.profile),
+      tester: data.tester || null,
       products: Array.isArray(data.products) ? data.products.slice() : [],
       projects: Array.isArray(data.projects) ? data.projects.slice() : [],
       projectList: Array.isArray(data.projectList) ? data.projectList.slice() : [],
@@ -726,14 +727,19 @@
     const m = Core.metrics(state);
     const today = Core.localDate();
     const todayLabel = Core.formatDateCN(today, true);
-    const focusCandidates = state.tasks
+    const dailyFocus = Core.dailyFocus({
+      tasks: state.allTasks || state.tasks,
+      bugs: state.allBugs || state.bugs,
+      tester: state.tester || (state.zentao ? { account: state.zentao.account } : null)
+    }, today);
+    const myTasks = state.tasks.filter((task) => task.isMine !== false);
+    const focusCandidates = myTasks
       .filter((task) => task.status !== 'done' && (
         task.dueDate === today
         || (task.dueDate && task.dueDate < today)
         || task.status === 'doing'
         || task.status === 'blocked'
       ));
-    const heroFocusCount = Array.from(new Map(focusCandidates.map((task) => [task.id, task])).values()).length;
     const focusTasks = focusCandidates
       .sort((a, b) => {
         if (a.status === 'blocked' && b.status !== 'blocked') return -1;
@@ -762,6 +768,13 @@
     const reportFoot = reportStatus === 'none'
       ? '自动汇总今日进展'
       : `${m.taskDoneToday} 项已完成 · ${m.bugFoundToday} 个新 Bug`;
+    const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
+    const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
+    const focusSummary = [
+      dailyFocus.bugs.pending ? `${dailyFocus.bugs.pending} 个待验证 Bug` : '',
+      dailyFocus.versions.pending ? `${dailyFocus.versions.pending} 个待发版版本` : '',
+      dailyFocus.tasks.pending ? `${dailyFocus.tasks.pending} 项待完成任务` : ''
+    ].filter(Boolean).join('、');
 
     const riskRows = Object.keys(Core.SEVERITY).map((key) => {
       const count = severity[key];
@@ -779,7 +792,7 @@
         <div class="hero-copy">
           <div class="hero-kicker"><span class="live-dot"></span>${esc(todayLabel)} · 禅道数据 ${esc(fmtDateTime(state.sync && state.sync.lastSyncAt))}</div>
           <h2>${greeting()}，<span>${esc(state.profile.name)}</span></h2>
-          <p>今天有 ${heroFocusCount} 项工作需要推进${m.bugSevere ? `，${m.bugSevere} 个 P0/P1 Bug 需要重点关注` : '，当前没有高优先级缺陷'}。先处理关键路径，再留一点复盘时间。</p>
+          <p>今天有 ${dailyFocus.pendingTotal} 项工作需要推进${focusSummary ? `（${focusSummary}）` : ''}${m.bugSevere ? `，${m.bugSevere} 个 P0/P1 Bug 需要重点关注` : '，当前没有高优先级缺陷'}。先处理关键路径，再留一点复盘时间。</p>
           <div class="hero-actions">
             <button class="btn btn-primary" type="button" data-action="navigate" data-view="tasks">${icon('play')}查看今日任务</button>
             <button class="btn" type="button" data-action="create-report">${icon('sparkles')}生成工作日报</button>
@@ -787,16 +800,35 @@
           </div>
         </div>
         <div class="hero-progress-wrap">
-          <div class="focus-ring" style="--progress:${m.progress}" role="img" aria-label="今日推进进度 ${m.progress}%">
+          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="今日推进综合进度 ${dailyFocus.progress}%">
             <div class="focus-ring-inner">
-              <strong>${m.progress}<span>%</span></strong>
+              <strong>${dailyFocus.progress}<span>%</span></strong>
               <small>今日推进</small>
             </div>
           </div>
           <div class="hero-progress-meta">
-            <strong>${m.completedCount} / ${m.plannedCount} 项已完成</strong>
-            <span>${m.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉关键路径上的任务。'}</span>
-            <div class="mini-line"><i style="width:${m.progress}%"></i></div>
+            <strong>${dailyFocus.completedCount} / ${dailyFocus.plannedCount} 项已推进</strong>
+            <span>待验证 ${dailyFocus.bugs.pending} 个 · 待发版 ${dailyFocus.versions.pending} 个 · 待完成 ${dailyFocus.tasks.pending} 项</span>
+            ${dailyFocus.versions.pending ? `<span class="focus-version-names" title="${esc(versionNames || '')}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
+            <div class="focus-breakdown" aria-label="今日推进构成">
+              <div class="focus-breakdown-row">
+                <span class="focus-breakdown-label">Bug 验证</span>
+                <span class="focus-breakdown-track"><b style="width:${dailyFocus.bugs.progress}%"></b></span>
+                <span class="focus-breakdown-value">${dailyFocus.bugs.doneToday}/${dailyFocus.bugs.total}</span>
+              </div>
+              <div class="focus-breakdown-row">
+                <span class="focus-breakdown-label">版本就绪</span>
+                <span class="focus-breakdown-track is-version"><b style="width:${dailyFocus.versions.progress}%"></b></span>
+                <span class="focus-breakdown-value">${dailyFocus.versions.progress}%</span>
+              </div>
+              <div class="focus-breakdown-row">
+                <span class="focus-breakdown-label">任务完成</span>
+                <span class="focus-breakdown-track is-task"><b style="width:${dailyFocus.tasks.progress}%"></b></span>
+                <span class="focus-breakdown-value">${dailyFocus.tasks.doneToday}/${dailyFocus.tasks.total}</span>
+              </div>
+            </div>
+            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}</span>
+            <div class="mini-line"><i style="width:${dailyFocus.progress}%"></i></div>
           </div>
         </div>
       </section>
