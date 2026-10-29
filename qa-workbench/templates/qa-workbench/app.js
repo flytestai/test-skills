@@ -838,21 +838,6 @@
       ${autojobBanner()}
 
       <section class="kpi-grid" aria-label="工作概览">
-        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-tasks" aria-label="查看待办任务" title="打开任务管理">
-          <div class="kpi-top"><span class="kpi-label">待办任务</span><span class="kpi-icon tint-blue">${icon('tasks')}</span></div>
-          <div class="kpi-value">${m.taskOpen}<small>项</small></div>
-          <div class="kpi-foot"><span class="up">${m.taskDoing}</span> 项进行中${m.taskBlocked ? ` · <span class="warn">${m.taskBlocked} 项阻塞</span>` : ''}</div>
-        </article>
-        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-bugs" aria-label="查看我提交的未关闭 Bug" title="打开 Bug 跟踪">
-          <div class="kpi-top"><span class="kpi-label">我提交的未关闭 Bug</span><span class="kpi-icon tint-red">${icon('bug')}</span></div>
-          <div class="kpi-value">${m.bugOpen}<small>个</small></div>
-          <div class="kpi-foot"><span class="${m.bugSevere ? 'danger' : ''}">${m.bugSevere}</span> 个 P0/P1 待处理</div>
-        </article>
-        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-due" aria-label="查看今日到期任务" title="打开今日到期任务">
-          <div class="kpi-top"><span class="kpi-label">今日到期</span><span class="kpi-icon tint-amber">${icon('calendar')}</span></div>
-          <div class="kpi-value">${m.taskDueToday}<small>项</small></div>
-          <div class="kpi-foot">${m.taskOverdue ? `<span class="danger">${m.taskOverdue} 项已逾期</span>` : '<span class="up">暂无逾期任务</span>'} · 今日完成 ${m.taskDoneToday} 项</div>
-        </article>
         <article class="kpi-card kpi-pending" aria-label="今日待验证 Bug">
           <div class="kpi-top"><span class="kpi-label">今日待验证</span><span class="kpi-icon tint-amber">${icon('shield')}</span></div>
           <div class="kpi-value">${pendingBugs.length}<small>个</small></div>
@@ -866,6 +851,21 @@
               </button>`).join('') : `
               <div class="kpi-pending-empty">${icon('check-circle')}<span>暂无待验证 Bug</span></div>`}
           </div>
+        </article>
+        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-bugs" aria-label="查看我提交的未关闭 Bug" title="打开 Bug 跟踪">
+          <div class="kpi-top"><span class="kpi-label">我提交的未关闭 Bug</span><span class="kpi-icon tint-red">${icon('bug')}</span></div>
+          <div class="kpi-value">${m.bugOpen}<small>个</small></div>
+          <div class="kpi-foot"><span class="${m.bugSevere ? 'danger' : ''}">${m.bugSevere}</span> 个 P0/P1 待处理</div>
+        </article>
+        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-due" aria-label="查看今日到期任务" title="打开今日到期任务">
+          <div class="kpi-top"><span class="kpi-label">今日到期</span><span class="kpi-icon tint-amber">${icon('calendar')}</span></div>
+          <div class="kpi-value">${m.taskDueToday}<small>项</small></div>
+          <div class="kpi-foot">${m.taskOverdue ? `<span class="danger">${m.taskOverdue} 项已逾期</span>` : '<span class="up">暂无逾期任务</span>'} · 今日完成 ${m.taskDoneToday} 项</div>
+        </article>
+        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-tasks" aria-label="查看待办任务" title="打开任务管理">
+          <div class="kpi-top"><span class="kpi-label">待办任务</span><span class="kpi-icon tint-blue">${icon('tasks')}</span></div>
+          <div class="kpi-value">${m.taskOpen}<small>项</small></div>
+          <div class="kpi-foot"><span class="up">${m.taskDoing}</span> 项进行中${m.taskBlocked ? ` · <span class="warn">${m.taskBlocked} 项阻塞</span>` : ''}</div>
         </article>
       </section>
 
