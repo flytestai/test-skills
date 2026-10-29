@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const REPORT_FIELDS = ['summary', 'done', 'bugs', 'ongoing', 'next', 'risks'];
-const VIEWS = new Set(['dashboard', 'tasks', 'bugs', 'reports', 'settings']);
+const VIEWS = new Set(['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings']);
 const TASK_SCOPES = new Set(['mine', 'test']);
 const BUG_SCOPES = new Set(['opened', 'assigned', 'all']);
 
@@ -14,6 +14,62 @@ function text(value, maxLength) {
 
 function isDate(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value || '')) && !Number.isNaN(new Date(`${value}T12:00:00`).getTime());
+}
+
+function normalizeDateTime(value) {
+  const raw = String(value == null ? '' : value).trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})/);
+  if (!match || Number.isNaN(new Date(match[1]).getTime())) {
+    const error = new Error('测试时间格式无效，请使用日期和时间。');
+    error.status = 400;
+    throw error;
+  }
+  return match[1];
+}
+
+function normalizeReleaseKey(value) {
+  const key = String(value == null ? '' : value).trim();
+  if (!/^[0-9A-Za-z._-]{1,64}$/.test(key)) {
+    const error = new Error('版本标识无效。');
+    error.status = 400;
+    throw error;
+  }
+  return key;
+}
+
+function normalizeReleasePlan(raw, existing) {
+  const input = raw && typeof raw === 'object' ? raw : {};
+  const base = existing && typeof existing === 'object' ? existing : {};
+  const key = normalizeReleaseKey(input.key != null ? input.key : base.key);
+  const testStart = normalizeDateTime(input.testStart != null ? input.testStart : base.testStart);
+  const testEnd = normalizeDateTime(input.testEnd != null ? input.testEnd : base.testEnd);
+  if (testStart && testEnd && testEnd < testStart) {
+    const error = new Error('测试结束时间不能早于开始时间。');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    key,
+    name: text(input.name != null ? input.name : base.name || key, 120).trim() || key,
+    testStart,
+    testEnd,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function normalizeReleasePlans(raw) {
+  const input = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const plans = {};
+  Object.keys(input).forEach((key) => {
+    try {
+      const plan = normalizeReleasePlan(Object.assign({}, input[key], { key }), null);
+      plans[plan.key] = plan;
+    } catch (error) {
+      // Ignore invalid saved plans instead of blocking the whole store.
+    }
+  });
+  return plans;
 }
 
 function defaultData() {
@@ -32,6 +88,7 @@ function defaultData() {
       }
     },
     reports: [],
+    releasePlans: {},
     updatedAt: new Date().toISOString()
   };
 }
@@ -135,6 +192,7 @@ class Store {
       version: 2,
       settings,
       reports: Array.from(deduped.values()).sort((a, b) => b.date.localeCompare(a.date)),
+      releasePlans: normalizeReleasePlans(input.releasePlans),
       updatedAt: input.updatedAt || new Date().toISOString()
     };
   }
@@ -166,6 +224,25 @@ class Store {
     return this.data.reports.slice().sort((a, b) => b.date.localeCompare(a.date));
   }
 
+  getReleasePlans() {
+    return Object.assign({}, this.data.releasePlans);
+  }
+
+  updateReleasePlan(raw) {
+    const input = Object.assign({}, raw);
+    const key = normalizeReleaseKey(input.key);
+    const existing = this.data.releasePlans[key] || null;
+    const plan = normalizeReleasePlan(input, existing);
+    if (!plan.testStart && !plan.testEnd) {
+      delete this.data.releasePlans[key];
+      this.save();
+      return Object.assign({}, plan, { removed: true });
+    }
+    this.data.releasePlans[key] = plan;
+    this.save();
+    return plan;
+  }
+
   upsertReport(raw) {
     const date = isDate(raw && raw.date) ? String(raw.date) : '';
     if (!date) {
@@ -186,7 +263,8 @@ class Store {
   snapshot() {
     return {
       settings: this.data.settings,
-      reports: this.getReports()
+      reports: this.getReports(),
+      releasePlans: this.getReleasePlans()
     };
   }
 }
@@ -196,6 +274,8 @@ module.exports = {
   defaultData,
   normalizeReport,
   normalizeSettings,
+  normalizeReleasePlan,
+  normalizeReleasePlans,
   REPORT_FIELDS,
   VIEWS
 };

@@ -75,6 +75,31 @@ Start from `config.example.json`. The installer creates this file automatically.
 
 `productId` and `taskProjectIds` are **not required**. Older configurations may contain them; they are treated only as compatibility fallbacks and do not limit synchronization.
 
+## Release test windows
+
+发版管理 does not add configuration keys. It derives the version catalog from synchronized task `execution` values and Bug `version` values, then stores only the test start/end times in `data/app-data.json`:
+
+```json
+{
+  "releasePlans": {
+    "2.9.0": {
+      "key": "2.9.0",
+      "name": "2.9.0",
+      "testStart": "2026-10-01T09:00",
+      "testEnd": "2026-10-31T18:00",
+      "updatedAt": "2026-10-29T11:51:30.181Z"
+    }
+  }
+}
+```
+
+- Version keys come from the first numeric version in an execution or Bug version; `主干` / `trunk` is excluded.
+- `testStart` and `testEnd` use local time in `YYYY-MM-DDTHH:mm` format. `testEnd` cannot be earlier than `testStart`.
+- Clearing both fields removes the plan.
+- Test windows never write back to ZenTao and are not included in the snapshot cache; they are merged at response time.
+- Status is derived at read time: `testing` when the current time is inside the window, `upcoming` before it, `ended` after it, and `unplanned` when no window is set.
+- The 发版管理 page has no separate permission switch. Anyone who can open the local workbench can edit the windows.
+
 ## Environment variables
 
 | Variable | Effect |

@@ -248,6 +248,34 @@ test('Store normalizes settings and rejects invalid scope preferences', () => {
   });
 });
 
+test('Store persists release test windows and rejects invalid ranges', () => {
+  withTempStore((store, file) => {
+    const saved = store.updateReleasePlan({
+      key: '9.9.0',
+      name: 'PC 9.9.0',
+      testStart: '2026-10-01T09:00',
+      testEnd: '2026-10-03T18:00'
+    });
+    assert.equal(saved.key, '9.9.0');
+    assert.equal(saved.testStart, '2026-10-01T09:00');
+    assert.equal(saved.testEnd, '2026-10-03T18:00');
+
+    const reloaded = new Store(file);
+    assert.equal(reloaded.getReleasePlans()['9.9.0'].testEnd, '2026-10-03T18:00');
+    assert.equal(reloaded.snapshot().releasePlans['9.9.0'].name, 'PC 9.9.0');
+
+    assert.throws(
+      () => store.updateReleasePlan({ key: '9.9.0', testStart: '2026-10-03T18:00', testEnd: '2026-10-01T09:00' }),
+      /测试结束时间不能早于开始时间/
+    );
+    assert.throws(() => store.updateReleasePlan({ key: 'bad key!' }), /版本标识无效/);
+
+    store.updateReleasePlan({ key: '9.9.0', testStart: '', testEnd: '' });
+    assert.equal(store.getReleasePlans()['9.9.0'], undefined);
+    assert.equal(new Store(file).getReleasePlans()['9.9.0'], undefined);
+  });
+});
+
 test('HTTP service exposes only whitelisted static files and safe health data', async () => {
   const server = createHttpServer();
   await new Promise((resolve, reject) => {

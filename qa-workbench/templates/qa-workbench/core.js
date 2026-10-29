@@ -660,6 +660,109 @@
     return total ? Math.round((done / total) * 100) : 0;
   }
 
+  // 发版管理：从禅道执行与 Bug 版本字段汇总版本，并合并本地测试时间。
+  function releaseCatalog(state, plans) {
+    const tasks = (state && state.tasks) || [];
+    const bugs = (state && state.bugs) || [];
+    const planMap = plans && typeof plans === 'object' ? plans : {};
+    const versions = new Map();
+    const ensure = (key, project) => {
+      const normalized = String(key || '').trim();
+      if (!normalized) return null;
+      let item = versions.get(normalized);
+      if (!item) {
+        item = {
+          key: normalized,
+          name: normalized,
+          projects: new Set(),
+          executions: new Set(),
+          tasks: new Map(),
+          pendingBugs: 0,
+          openBugs: 0,
+          latestEnd: ''
+        };
+        versions.set(normalized, item);
+      }
+      if (project) item.projects.add(String(project));
+      return item;
+    };
+
+    tasks.forEach((task) => {
+      const item = ensure(versionKey(task.execution), task.project);
+      if (!item) return;
+      item.tasks.set(String(task.id), task);
+      if (task.execution) item.executions.add(String(task.execution));
+      if (task.executionEnd && task.executionEnd > item.latestEnd) item.latestEnd = task.executionEnd;
+    });
+
+    bugs.forEach((bug) => {
+      const item = ensure(versionKey(bug.version), bug.project);
+      if (!item) return;
+      if (needsMyVerification(bug)) item.pendingBugs += 1;
+      else if (bug.isMine && bug.status !== 'closed') item.openBugs += 1;
+    });
+
+    Object.keys(planMap).forEach((key) => ensure(key));
+
+    const now = Date.now();
+    const items = [];
+    versions.forEach((item) => {
+      const allTasks = Array.from(item.tasks.values());
+      const doneTasks = allTasks.filter((task) => task.status === 'done').length;
+      const myOpenTasks = allTasks.filter((task) => task.status !== 'done' && (
+        typeof task.isMine === 'boolean' ? task.isMine : true
+      )).length;
+      const plan = planMap[item.key] || {};
+      const testStart = typeof plan.testStart === 'string' ? plan.testStart : '';
+      const testEnd = typeof plan.testEnd === 'string' ? plan.testEnd : '';
+      const startMs = testStart ? new Date(testStart).getTime() : 0;
+      const endMs = testEnd ? new Date(testEnd).getTime() : 0;
+      let status = 'unplanned';
+      if (testStart || testEnd) {
+        if (endMs && endMs < now) status = 'ended';
+        else if (startMs && startMs > now) status = 'upcoming';
+        else status = 'testing';
+      }
+      items.push({
+        key: item.key,
+        name: item.name,
+        projects: Array.from(item.projects),
+        executions: Array.from(item.executions),
+        taskTotal: allTasks.length,
+        taskDone: doneTasks,
+        taskOpen: allTasks.length - doneTasks,
+        myTaskOpen: myOpenTasks,
+        taskProgress: versionProgress(doneTasks, allTasks.length),
+        pendingBugs: item.pendingBugs,
+        openBugs: item.openBugs,
+        pending: myOpenTasks + item.pendingBugs + item.openBugs,
+        latestEnd: item.latestEnd,
+        testStart,
+        testEnd,
+        status,
+        planUpdatedAt: plan.updatedAt || ''
+      });
+    });
+
+    const cutoff = addDays(localDate(), -120);
+    const visible = items.filter((item) => (
+      item.testStart
+      || item.testEnd
+      || item.pendingBugs
+      || item.openBugs
+      || item.myTaskOpen
+      || (item.latestEnd && item.latestEnd >= cutoff)
+    ));
+    const rank = { testing: 0, upcoming: 1, unplanned: 2, ended: 3 };
+    visible.sort((a, b) => (
+      (rank[a.status] || 0) - (rank[b.status] || 0)
+      || String(a.testStart || '9999').localeCompare(String(b.testStart || '9999'))
+      || String(b.latestEnd || '').localeCompare(String(a.latestEnd || ''))
+      || a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
+    ));
+    return visible;
+  }
+
   // 当日进度 = 待我验证的 Bug + 待发版版本 + 我今天要完成的任务。
   function dailyFocus(state, date) {
     const day = date || localDate();
@@ -684,6 +787,10 @@
     const taskTotal = taskItems.length;
     const taskDone = taskDoneToday.length;
 
+    const releaseMap = new Map();
+    ((state && state.releases) || []).forEach((release) => {
+      if (release && release.key) releaseMap.set(String(release.key), release);
+    });
     const pendingBugs = bugs.filter(needsMyVerification);
     const bugDoneToday = bugs.filter((bug) => bug.verifiedAt && localDate(bug.verifiedAt) === day && (
       bug.isAssignedToMe
@@ -721,16 +828,23 @@
       const item = ensureVersion(versionKey(bug.version), bug.project);
       if (item) item.doneBugs.push(bug);
     });
+    releaseMap.forEach((release) => {
+      if (!release.testStart && !release.testEnd) return;
+      if (release.status === 'ended') return;
+      ensureVersion(release.key, release.projects && release.projects[0]);
+    });
 
     const releaseCutoff = addDays(day, -45);
     const versionItems = [];
     versions.forEach((item) => {
+      const release = releaseMap.get(item.key) || null;
       const allTasks = Array.from(item.tasks.values());
       const doneTasks = allTasks.filter((task) => task.status === 'done').length;
       const myOpenTasks = allTasks.filter((task) => task.status !== 'done' && (typeof task.isMine === 'boolean' ? task.isMine : true)).length;
       const pendingCount = item.pendingBugs.length;
       const openCount = item.openBugs.length;
-      if (!myOpenTasks && !pendingCount && !openCount) return;
+      const hasActiveWindow = Boolean(release && (release.testStart || release.testEnd) && release.status !== 'ended');
+      if (!myOpenTasks && !pendingCount && !openCount && !hasActiveWindow) return;
       // 仍有我提交的未关闭 Bug 或待我验证 Bug 的版本，按待发版处理；
       // 只有历史遗留任务时，结束日期超过 45 天的旧版本不再计入。
       const ends = allTasks.map((task) => task.executionEnd).filter(Boolean).sort();
@@ -740,7 +854,7 @@
       const doneUnits = doneTasks + item.doneBugs.length;
       versionItems.push({
         key: item.key,
-        name: item.name,
+        name: release && release.name ? release.name : item.name,
         projects: Array.from(item.projects),
         taskTotal: allTasks.length,
         taskDone: doneTasks,
@@ -748,7 +862,10 @@
         pendingBugs: pendingCount,
         openBugs: openCount,
         pending: myOpenTasks + pendingCount + openCount,
-        progress: versionProgress(doneUnits, totalUnits)
+        progress: versionProgress(doneUnits, totalUnits),
+        testStart: release ? release.testStart : '',
+        testEnd: release ? release.testEnd : '',
+        releaseStatus: release ? release.status : 'unplanned'
       });
     });
     versionItems.sort((a, b) => (
@@ -1524,6 +1641,7 @@
     isTaskOverdue,
     isBugOpen,
     needsMyVerification,
+    releaseCatalog,
     dailyFocus,
     metrics,
     statusCounts,

@@ -258,3 +258,66 @@ test('dailyFocus 合并待验证 Bug、待发版版本与待完成任务的综�
   assert.deepEqual(metrics.focus, focus);
   assert.equal(metrics.progress, focus.progress);
 });
+
+test('releaseCatalog 从执行与 Bug 版本汇总版本，并合并本地测试时间', () => {
+  const state = {
+    tasks: [
+      { id: 'T-1', execution: 'PC9.9.0版本', project: 'PC 客户端', status: 'done', isMine: true, executionEnd: '2026-10-30' },
+      { id: 'T-2', execution: 'PC9.9.0版本', project: 'PC 客户端', status: 'doing', isMine: true, executionEnd: '2026-10-30' },
+      { id: 'T-3', execution: 'PC8.8.0版本', project: 'PC 客户端', status: 'doing', isMine: true, executionEnd: '2026-10-30' }
+    ],
+    bugs: [
+      { id: 'B-1', version: '9.9.0', project: 'PC 客户端', status: 'active', needsMyVerification: true, isMine: false },
+      { id: 'B-2', version: '9.9.0', project: 'PC 客户端', status: 'active', isMine: true }
+    ]
+  };
+  const plans = {
+    '9.9.0': { key: '9.9.0', name: '9.9.0', testStart: '2026-10-01T09:00', testEnd: '2099-12-31T18:00' },
+    '8.8.0': { key: '8.8.0', name: '8.8.0', testStart: '2026-10-01T09:00', testEnd: '2020-10-01T18:00' }
+  };
+  const releases = Core.releaseCatalog(state, plans);
+  assert.equal(releases.length, 2);
+  const testing = releases.find((item) => item.key === '9.9.0');
+  assert.equal(testing.status, 'testing');
+  assert.equal(testing.taskTotal, 2);
+  assert.equal(testing.taskDone, 1);
+  assert.equal(testing.taskProgress, 50);
+  assert.equal(testing.pendingBugs, 1);
+  assert.equal(testing.openBugs, 1);
+  assert.equal(testing.testStart, '2026-10-01T09:00');
+  assert.equal(testing.testEnd, '2099-12-31T18:00');
+  assert.deepEqual(testing.projects, ['PC 客户端']);
+  assert.equal(releases.find((item) => item.key === '8.8.0').status, 'ended');
+
+  const upcoming = Core.releaseCatalog({
+    tasks: [{ id: 'T-4', execution: 'PC7.7.0版本', project: 'PC 客户端', status: 'doing', isMine: true }]
+  }, {
+    '7.7.0': { key: '7.7.0', name: '7.7.0', testStart: '2099-01-01T09:00', testEnd: '2099-02-01T18:00' }
+  });
+  assert.equal(upcoming[0].status, 'upcoming');
+
+  const unplanned = Core.releaseCatalog({
+    bugs: [{ id: 'B-3', version: '6.6.0', project: 'PC 客户端', status: 'active', needsMyVerification: true }]
+  }, {});
+  assert.equal(unplanned[0].status, 'unplanned');
+  assert.equal(unplanned[0].pendingBugs, 1);
+});
+
+test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
+  const state = fixedState();
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.releases = [{
+    key: '2.8.0',
+    name: '2.8.0',
+    projects: ['行情终端'],
+    testStart: '2026-10-01T09:00',
+    testEnd: '2099-12-31T18:00',
+    status: 'testing'
+  }];
+  const focus = Core.dailyFocus(state, FIXED_DATE);
+  const version = focus.versions.items.find((item) => item.key === '2.8.0');
+  assert.ok(version);
+  assert.equal(version.testStart, '2026-10-01T09:00');
+  assert.equal(version.testEnd, '2099-12-31T18:00');
+  assert.equal(version.releaseStatus, 'testing');
+});

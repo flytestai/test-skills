@@ -3,7 +3,7 @@
 
   const Core = window.QAWorkbenchCore;
   const PREF_KEY = 'qdesk.ui.v2';
-  const VIEWS = ['dashboard', 'tasks', 'bugs', 'reports', 'settings'];
+  const VIEWS = ['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings'];
   const STATUS_COLORS = { todo: '#8592a8', doing: '#4f6ef7', blocked: '#f0783c', done: '#1eab7a' };
   const TASK_STATUS_CLASS = { todo: 'status-todo', doing: 'status-doing', blocked: 'status-blocked', done: 'status-done' };
   const BUG_STATUS_CLASS = { new: 'bug-new', confirmed: 'bug-confirmed', fixing: 'bug-fixing', verifying: 'bug-verifying', closed: 'bug-closed', hold: 'bug-hold' };
@@ -216,6 +216,7 @@
       taskStats: data.taskStats || null,
       scopeCounts: data.scopeCounts || null,
       reports: Array.isArray(data.reports) ? data.reports : [],
+      releasePlans: data.releasePlans && typeof data.releasePlans === 'object' ? data.releasePlans : {},
       creation: data.creation || null,
       sync: data.sync || null,
       syncState: data.syncState || null,
@@ -534,6 +535,15 @@
       }
     }
     switch (view) {
+      case 'releases': {
+        const releases = releaseItems();
+        const active = releases.filter((item) => item.status === 'testing').length;
+        return {
+          eyebrow: 'RELEASE / TEST WINDOW',
+          title: '发版管理',
+          subtitle: `${releases.length} 个版本 · ${active} 个测试中 · 测试时间仅保存在本机`
+        };
+      }
       case 'tasks':
         return {
           eyebrow: 'ZENTAO / TASKS',
@@ -580,6 +590,10 @@
     const openBugs = state.bugs.filter((bug) => bug.status !== 'closed').length;
     $('#nav-task-count').textContent = String(openTasks);
     $('#nav-bug-count').textContent = String(openBugs);
+    const navReleaseCount = $('#nav-release-count');
+    if (navReleaseCount) {
+      navReleaseCount.textContent = String(releaseItems().filter((item) => item.status === 'testing' || item.status === 'upcoming').length);
+    }
     $('#sidebar-name').textContent = state.profile.name;
     $('#sidebar-role').textContent = state.profile.role;
     $('#sidebar-sprint').textContent = state.profile.sprint || 'PC客户端';
@@ -599,6 +613,7 @@
     updateChrome();
     const renderers = {
       dashboard: renderDashboard,
+      releases: renderReleases,
       tasks: renderTasks,
       bugs: renderBugs,
       reports: renderReports,
@@ -701,14 +716,25 @@
     </section>`;
   }
 
+  function releaseItems() {
+    if (!state) return [];
+    return Core.releaseCatalog({
+      tasks: state.allTasks || state.tasks || [],
+      bugs: state.allBugs || state.bugs || []
+    }, state.releasePlans || {});
+  }
+
   function renderDashboard() {
     const m = Core.metrics(state);
     const today = Core.localDate();
     const todayLabel = Core.formatDateCN(today, true);
+    const releases = releaseItems();
     const dailyFocus = Core.dailyFocus({
       tasks: state.allTasks || state.tasks,
       bugs: state.allBugs || state.bugs,
-      tester: state.tester || (state.zentao ? { account: state.zentao.account } : null)
+      tester: state.tester || (state.zentao ? { account: state.zentao.account } : null),
+      releases,
+      releasePlans: state.releasePlans || {}
     }, today);
     const myTasks = state.tasks.filter((task) => task.isMine !== false);
     const focusCandidates = myTasks
@@ -748,7 +774,16 @@
       return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
     });
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
-    const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
+    const topVersions = dailyFocus.versions.items.slice(0, 3);
+    const versionNames = topVersions.map((item) => (
+      item.releaseStatus === 'testing' ? `${item.name}（测试中）` : item.name
+    )).join(' / ');
+    const versionTitle = topVersions.map((item) => {
+      if (!item.testStart && !item.testEnd) return item.name;
+      const start = item.testStart ? fmtFullDate(item.testStart) : '未设置';
+      const end = item.testEnd ? fmtFullDate(item.testEnd) : '未设置';
+      return `${item.name}：${start} 至 ${end}`;
+    }).join('\n');
     const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
     const focusParts = [];
     if (dailyFocus.bugs.pending) focusParts.push(`${dailyFocus.bugs.pending} 个待验证 Bug`);
@@ -800,7 +835,7 @@
           <div class="hero-progress-meta">
             <strong>${dailyFocus.completedCount} / ${dailyFocus.plannedCount} 项已推进</strong>
             <span>待验证 ${dailyFocus.bugs.pending} 个 · 待发版 ${dailyFocus.versions.pending} 个 · 待完成 ${dailyFocus.tasks.pending} 项</span>
-            ${dailyFocus.versions.pending ? `<span class="focus-version-names" title="${esc(versionNames || '')}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
+            ${dailyFocus.versions.pending ? `<span class="focus-version-names" title="${esc(versionTitle || versionNames)}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
             <div class="focus-breakdown" aria-label="当日进度构成">
               <div class="focus-breakdown-row">
                 <span class="focus-breakdown-label">Bug 验证</span>
@@ -980,6 +1015,145 @@
           </section>
 
         </div>
+      </div>
+    `;
+  }
+
+  /* =========================================================
+     Releases
+     ========================================================= */
+
+  function releaseStatusMeta(status) {
+    const map = {
+      testing: { label: '测试中', className: 'is-testing' },
+      upcoming: { label: '待开始', className: 'is-upcoming' },
+      ended: { label: '已结束', className: 'is-ended' },
+      unplanned: { label: '未排期', className: 'is-unplanned' }
+    };
+    return map[status] || map.unplanned;
+  }
+
+  function toDateTimeInput(value) {
+    const raw = String(value || '');
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) ? raw.slice(0, 16) : '';
+  }
+
+  async function saveRelease(key, testStart, testEnd, button) {
+    if (!key) return;
+    if (button) {
+      button.disabled = true;
+      button.dataset.busy = '1';
+    }
+    try {
+      const data = await apiRequest('/api/releases', {
+        method: 'POST',
+        body: { key, testStart, testEnd }
+      });
+      state.releasePlans = data.releasePlans && typeof data.releasePlans === 'object' ? data.releasePlans : state.releasePlans;
+      if (data.releases) state.releases = data.releases;
+      showToast('发版测试时间已保存。');
+      renderView(false);
+    } catch (error) {
+      showToast(error.message, 'error');
+      if (button) {
+        button.disabled = false;
+        delete button.dataset.busy;
+      }
+    }
+  }
+
+  function renderReleases() {
+    const releases = releaseItems();
+    const testing = releases.filter((item) => item.status === 'testing').length;
+    const upcoming = releases.filter((item) => item.status === 'upcoming').length;
+    const planned = releases.filter((item) => item.testStart || item.testEnd).length;
+
+    const cards = releases.map((item) => {
+      const meta = releaseStatusMeta(item.status);
+      const projects = (item.projects || []).filter(Boolean);
+      const executions = (item.executions || []).filter(Boolean);
+      const projectText = projects.length ? projects.join(' / ') : '未归属项目';
+      const executionText = executions.length ? executions.join(' / ') : '';
+      return `<article class="release-card ${meta.className}" data-release-key="${esc(item.key)}">
+        <div class="release-card-main">
+          <div class="release-card-head">
+            <div class="release-card-title">
+              <span class="release-icon">${icon('layers')}</span>
+              <div>
+                <h3>${esc(item.name)}</h3>
+                <p>${esc(projectText)}${executionText ? `<span class="sep"></span>${esc(executionText)}` : ''}</p>
+              </div>
+            </div>
+            <span class="release-badge ${meta.className}">${meta.label}</span>
+          </div>
+          <div class="release-stats">
+            <div class="release-stat"><strong>${item.taskDone}<small>/${item.taskTotal}</small></strong><span>任务完成</span></div>
+            <div class="release-stat"><strong>${item.pendingBugs}</strong><span>待验证 Bug</span></div>
+            <div class="release-stat"><strong>${item.openBugs}</strong><span>未关闭 Bug</span></div>
+            <div class="release-stat"><strong>${item.taskProgress}<small>%</small></strong><span>任务进度</span></div>
+          </div>
+          <div class="release-progress" role="img" aria-label="任务完成度 ${item.taskProgress}%">
+            <i style="width:${item.taskProgress}%"></i>
+          </div>
+          <div class="release-card-foot">
+            <span>${item.testStart || item.testEnd
+              ? `测试窗口：${esc(item.testStart ? fmtFullDate(item.testStart) : '未设置')} 至 ${esc(item.testEnd ? fmtFullDate(item.testEnd) : '未设置')}`
+              : '尚未设置测试开始与结束时间'}</span>
+            <button class="btn btn-soft btn-sm" type="button" data-action="navigate" data-view="tasks">查看任务 ${icon('arrow-right')}</button>
+          </div>
+        </div>
+        <div class="release-card-window">
+          <div class="release-window-head">
+            <span class="release-window-title">${icon('clock')}测试时间</span>
+            <small>仅保存在本机</small>
+          </div>
+          <div class="release-window-fields">
+            <label class="release-field">
+              <span>测试开始</span>
+              <input type="datetime-local" data-release-field="testStart" value="${esc(toDateTimeInput(item.testStart))}" aria-label="${esc(item.name)} 测试开始时间">
+            </label>
+            <label class="release-field">
+              <span>测试结束</span>
+              <input type="datetime-local" data-release-field="testEnd" value="${esc(toDateTimeInput(item.testEnd))}" aria-label="${esc(item.name)} 测试结束时间">
+            </label>
+          </div>
+          <button class="btn btn-primary btn-sm release-save" type="button" data-action="save-release" data-key="${esc(item.key)}">${icon('check')}保存测试时间</button>
+          ${item.planUpdatedAt ? `<small class="release-updated">上次保存 ${esc(fmtDateTime(item.planUpdatedAt))}</small>` : '<small class="release-updated">设置后自动同步到工作台</small>'}
+        </div>
+      </article>`;
+    }).join('');
+
+    return `
+      <section class="panel release-hero">
+        <div class="release-hero-copy">
+          <span class="release-eyebrow">${icon('layers')} RELEASE / TEST WINDOW</span>
+          <h2>发版管理</h2>
+          <p>版本来自禅道同步的执行与 Bug 版本字段。为版本设置测试开始、结束时间后，工作台的待发版版本会同步显示对应测试窗口。</p>
+        </div>
+        <div class="release-hero-stats">
+          <div><strong>${releases.length}</strong><span>版本</span></div>
+          <div><strong>${testing}</strong><span>测试中</span></div>
+          <div><strong>${upcoming}</strong><span>待开始</span></div>
+          <div><strong>${planned}</strong><span>已排期</span></div>
+        </div>
+        <div class="release-hero-actions">
+          <button class="btn btn-primary" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新版本</button>
+          <span>刷新会重新同步任务、执行与 Bug 版本</span>
+        </div>
+      </section>
+
+      <div class="release-toolbar">
+        <span>${icon('calendar')}共 ${releases.length} 个版本，${planned} 个已设置测试时间</span>
+        <span class="release-toolbar-note">测试时间仅保存在 QDesk 本机，不回写禅道</span>
+      </div>
+
+      <div class="release-list">
+        ${cards || `<div class="empty-state release-empty">
+          <div class="empty-icon">${icon('layers')}</div>
+          <h3>暂无可管理的版本</h3>
+          <p>请先从禅道同步任务与 Bug，版本会按执行和版本字段自动汇总。</p>
+          <button class="btn btn-primary btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button>
+        </div>`}
       </div>
     `;
   }
@@ -3545,6 +3719,14 @@
       ui.reportDate = Core.localDate();
       navigate('reports');
       persistState();
+      return;
+    }
+    if (action === 'save-release') {
+      const card = actionEl.closest('.release-card');
+      const key = actionEl.dataset.key || (card ? card.dataset.releaseKey : '');
+      const startInput = card ? card.querySelector('[data-release-field="testStart"]') : null;
+      const endInput = card ? card.querySelector('[data-release-field="testEnd"]') : null;
+      saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl);
       return;
     }
     if (action === 'set-task-scope') {

@@ -61,6 +61,15 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - **客服反馈**：自动识别 `autojob` 等 AI 客服账号指派给我、或由我解决 / 关闭的 Bug，包括待验证、我已解决、已关闭和 P0/P1 未关闭。autojob 新建并指派给我的 Bug 计入待验证；由我解决后指派回客服的 Bug 显示为「我已解决」，不计入待验证。页面通过「客服反馈」筛选和下方「客服反馈跟进」面板跟进，不再单独显示顶部横幅。
 - 客服反馈同步写入通知铃铛和当天工作日报。
 
+### 发版管理
+
+- 导航位于「任务管理」上方，版本列表来自禅道同步的任务执行名称与 Bug 影响版本。
+- 自动汇总每个版本的任务总数 / 完成数 / 进度、待验证 Bug 与未关闭 Bug。
+- 可为每个版本设置 **测试开始时间** 与 **测试结束时间**，状态自动标记为测试中、待开始、已结束或未排期。
+- 测试时间只保存在本机 `data/app-data.json`，不写回禅道；清空两个时间即可取消排期。
+- 工作台顶部的待发版版本会同步显示「测试中」标记和测试窗口 tooltip，修改后无需重新同步禅道。
+- 「从禅道刷新版本」复用后台全量同步，不额外调用禅道构建或发布接口。
+
 ### 任务管理（只读）
 
 - 自动汇总账号可访问项目下的全部任务。
@@ -200,6 +209,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 | POST | `/api/bugs` | 创建正式 Bug |
 | POST | `/api/bugs/:id/refresh` | 只读取并刷新这一条 Bug，不触发全量同步 |
 | GET | `/api/tasks?scope=mine\|test\|all` | 任务列表与统计 |
+| GET | `/api/releases` | 版本目录、测试窗口与已保存的 `releasePlans` |
+| POST | `/api/releases` | 保存或清空单个版本的测试开始 / 结束时间 |
 | GET / POST | `/api/reports` | 日报读取与保存 |
 | POST | `/api/settings` | 展示信息与界面偏好 |
 
@@ -207,7 +218,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 
 | 数据 | 位置 |
 | --- | --- |
-| 日报、展示信息、范围偏好 | `data/app-data.json` |
+| 日报、发版测试时间、展示信息、范围偏好 | `data/app-data.json` |
 | 禅道连接（含本地密码） | `data/zentao-auth.json` |
 | 最近成功快照（含任务 / Bug 业务数据） | `data/snapshot-cache.json` |
 | 界面偏好 | 浏览器 `localStorage`，键名 `qdesk.ui.v2` |

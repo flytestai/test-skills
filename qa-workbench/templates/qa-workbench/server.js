@@ -19,6 +19,7 @@ const {
   updateBug,
   bugAction
 } = require('./lib/zentao');
+const Core = require('./core');
 const {
   BUG_TYPES,
   normalizeTask,
@@ -948,6 +949,8 @@ function currentSyncState() {
 function decorateSnapshot(base) {
   const latest = store.snapshot();
   const settings = latest.settings;
+  const releasePlans = latest.releasePlans || store.getReleasePlans();
+  const releases = Core.releaseCatalog({ tasks: base.tasks || [], bugs: base.bugs || [] }, releasePlans);
   const profile = {
     ...base.profile,
     role: settings.profile.role,
@@ -960,6 +963,8 @@ function decorateSnapshot(base) {
     settings,
     profile,
     reports: latest.reports,
+    releasePlans,
+    releases,
     products: base.products || [],
     projectList: base.projectList || [],
     projects: base.projects || [],
@@ -1015,6 +1020,8 @@ function emptySnapshot() {
       tasks: { mine: 0, test: 0, all: 0 }
     },
     reports: store.getReports(),
+    releasePlans: store.getReleasePlans(),
+    releases: [],
     creation: {
       product,
       products: [],
@@ -2068,6 +2075,34 @@ async function handleApi(req, res, url) {
         stats: buildTaskStats(tasks)
       }
     });
+    return;
+  }
+
+  if (pathname === '/api/releases' && req.method === 'GET') {
+    const releasePlans = store.getReleasePlans();
+    const data = await getSnapshot();
+    const releases = Core.releaseCatalog({
+      tasks: data.tasks || [],
+      bugs: data.bugs || []
+    }, releasePlans);
+    sendJson(res, 200, { ok: true, data: { releases, releasePlans } });
+    return;
+  }
+
+  if (pathname === '/api/releases' && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const body = await readJsonBody(req, 64 * 1024);
+    const plan = store.updateReleasePlan(body);
+    snapshotRevision += 1;
+    const releasePlans = store.getReleasePlans();
+    const releases = Core.releaseCatalog({
+      tasks: snapshot ? snapshot.tasks || [] : [],
+      bugs: snapshot ? snapshot.bugs || [] : []
+    }, releasePlans);
+    sendJson(res, 200, { ok: true, data: { plan, releases, releasePlans, revision: snapshotRevision } });
     return;
   }
 

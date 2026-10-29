@@ -27,6 +27,8 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | POST | `/api/bugs/:id/confirm` | Confirm the Bug (ZenTao 22.5+ only) |
 | POST | `/api/bugs/:id/delete` | Delete the Bug through the CLI (`--yes`) |
 | GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats |
+| GET | `/api/releases` | Release catalog merged with local test windows, plus saved `releasePlans` |
+| POST | `/api/releases` | Set or clear one version's test start/end time; does not write to ZenTao |
 | GET | `/api/reports` | Stored daily reports |
 | POST | `/api/reports` | Create or update one report |
 | POST | `/api/settings` | Update display profile and UI preferences |
@@ -47,6 +49,24 @@ Action payloads:
 - `delete`: no fields; runs `zentao bug delete <id> --yes`.
 
 All action responses contain `{ ok: true, data: { id, action, message, incremental, refreshRequired } }`. After a successful write the server calls `zentao bug <id>` for that one Bug, re-normalizes it, updates the in-memory snapshot, recalculates Bug/autojob statistics, increments `revision` and writes the snapshot cache. `incremental: true` and `refreshRequired: false` mean the next `/api/bootstrap` already has the new state; a full sync is started only when the single-Bug read fails. ZenTao 22.4 does not support `bug confirm`, and its `bug update` CLI does not accept product or module changes.
+
+## Release test windows
+
+Release records are derived from synchronized ZenTao data; no build or release write API is required. A version key is the first numeric version found in `task.execution` or `bug.version` (for example `PC2.9.0版本` → `2.9.0`); `主干` / `trunk` values are ignored. Tasks and account-related Bugs are grouped by that key, and `Core.releaseCatalog(tasks, bugs, releasePlans)` returns task progress, pending verification Bugs, open Bugs and the current test-window status (`testing`, `upcoming`, `ended`, `unplanned`).
+
+`POST /api/releases` payload:
+
+```json
+{ "key": "2.9.0", "testStart": "2026-10-01T09:00", "testEnd": "2026-10-31T18:00" }
+```
+
+- `key`: required, letters, digits, dot, underscore or hyphen, maximum 64 characters.
+- `testStart` / `testEnd`: optional local `YYYY-MM-DDTHH:mm` values; send both as empty strings to remove the plan.
+- `testEnd` must not be earlier than `testStart`.
+- Test windows are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
+- The response returns `{ plan, releases, releasePlans, revision }`. Clients can merge `releasePlans` locally without a full snapshot reload.
+
+The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd` and `releaseStatus`, so dashboard version labels and tooltips stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions are excluded from the dashboard queue.
 
 ## Health example
 
@@ -116,6 +136,31 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
     "tasks": { "mine": 0, "test": 0, "all": 0 }
   },
   "reports": [],
+  "releasePlans": {
+    "2.9.0": {
+      "key": "2.9.0",
+      "name": "2.9.0",
+      "testStart": "2026-10-01T09:00",
+      "testEnd": "2026-10-31T18:00",
+      "updatedAt": "..."
+    }
+  },
+  "releases": [
+    {
+      "key": "2.9.0",
+      "name": "2.9.0",
+      "projects": ["PC客户端"],
+      "executions": ["PC2.9.0版本"],
+      "taskTotal": 28,
+      "taskDone": 23,
+      "taskProgress": 82,
+      "pendingBugs": 0,
+      "openBugs": 5,
+      "testStart": "2026-10-01T09:00",
+      "testEnd": "2026-10-31T18:00",
+      "status": "testing"
+    }
+  ],
   "creation": {
     "products": [],
     "projects": [],
@@ -168,6 +213,8 @@ The dashboard `当日进度` ring is computed client-side by `Core.dailyFocus(st
 
 The ring percentage counts only pending-verification Bugs and my unfinished tasks. Version readiness (completed tasks ÷ all tasks in that version) is shown in its own row for reference and is not included in the percentage. The three category rows show Bug verification, version readiness, and task completion separately.
 
+The dashboard reads version test windows from `releasePlans` via `Core.releaseCatalog`. Version names in the hero append `（测试中）` for versions whose window contains the current time, and the version tooltip lists the configured start/end time. Editing a window on the 发版管理 page updates the dashboard immediately after the API response; no ZenTao sync is needed.
+
 The fourth dashboard KPI card is `今日待验证`. It lists every pending-verification Bug regardless of creation date, sorted by priority, inside a scrollable area. Each row is a `data-action="open-bug"` button that opens that Bug's detail page directly. A card click does not open a separate list page.
 
 Task scope semantics:
@@ -180,7 +227,7 @@ Task scope semantics:
 
 | File | Contents | Sensitive |
 | --- | --- | --- |
-| `data/app-data.json` | reports, display profile, UI preferences | moderate |
+| `data/app-data.json` | reports, release test windows, display profile, UI preferences | moderate |
 | `data/zentao-auth.json` | URL, account, plaintext local password, display name, version 2 schema | **yes** |
 | `data/snapshot-cache.json` | full last successful snapshot, including tasks and Bugs | **yes** |
 | `data/qdesk-autostart.log` | autostart stdout/stderr | low |
