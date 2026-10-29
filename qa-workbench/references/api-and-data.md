@@ -57,16 +57,18 @@ Release records are derived from synchronized ZenTao data; no build or release w
 `POST /api/releases` payload:
 
 ```json
-{ "key": "2.9.0", "testStart": "2026-10-01T09:00", "testEnd": "2026-10-31T18:00" }
+{ "key": "2.9.0", "testStart": "2026-10-01T09:00", "testEnd": "2026-10-31T18:00", "closed": false }
 ```
 
 - `key`: required, letters, digits, dot, underscore or hyphen, maximum 64 characters.
-- `testStart` / `testEnd`: optional local `YYYY-MM-DDTHH:mm` values; send both as empty strings to remove the plan.
+- `testStart` / `testEnd`: optional local `YYYY-MM-DDTHH:mm` values; send both as empty strings to clear the window.
+- `closed`: optional local close flag. Closing a release does not write to ZenTao and does not require a test window.
 - `testEnd` must not be earlier than `testStart`.
-- Test windows are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
+- A plan is deleted only when both times are empty and `closed` is false.
+- Test windows and close flags are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
 - The response returns `{ plan, releases, releasePlans, revision }`. Clients can merge `releasePlans` locally without a full snapshot reload.
 
-The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd` and `releaseStatus`, so dashboard version labels and tooltips stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions are excluded from the dashboard queue.
+The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd` and `releaseStatus`, so dashboard version labels and tooltips stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions do not add a new queue item, and locally `closed` versions are removed from the dashboard queue entirely. The dashboard `发版：…` line only includes versions whose `testStart` or `testEnd` is set.
 
 ## Health example
 

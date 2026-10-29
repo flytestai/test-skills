@@ -270,7 +270,20 @@ test('Store persists release test windows and rejects invalid ranges', () => {
     );
     assert.throws(() => store.updateReleasePlan({ key: 'bad key!' }), /版本标识无效/);
 
-    store.updateReleasePlan({ key: '9.9.0', testStart: '', testEnd: '' });
+    const closed = store.updateReleasePlan({ key: '9.9.0', closed: true });
+    assert.equal(closed.closed, true);
+    assert.equal(closed.testStart, '2026-10-01T09:00');
+    assert.equal(new Store(file).getReleasePlans()['9.9.0'].closed, true);
+
+    const closedOnly = store.updateReleasePlan({ key: '7.7.0', closed: true });
+    assert.equal(closedOnly.closed, true);
+    assert.equal(closedOnly.testStart, '');
+    assert.ok(new Store(file).getReleasePlans()['7.7.0']);
+
+    store.updateReleasePlan({ key: '7.7.0', closed: false });
+    assert.equal(store.getReleasePlans()['7.7.0'], undefined);
+
+    store.updateReleasePlan({ key: '9.9.0', testStart: '', testEnd: '', closed: false });
     assert.equal(store.getReleasePlans()['9.9.0'], undefined);
     assert.equal(new Store(file).getReleasePlans()['9.9.0'], undefined);
   });

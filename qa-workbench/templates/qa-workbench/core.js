@@ -715,10 +715,13 @@
       const plan = planMap[item.key] || {};
       const testStart = typeof plan.testStart === 'string' ? plan.testStart : '';
       const testEnd = typeof plan.testEnd === 'string' ? plan.testEnd : '';
+      const closed = plan.closed === true;
       const startMs = testStart ? new Date(testStart).getTime() : 0;
       const endMs = testEnd ? new Date(testEnd).getTime() : 0;
       let status = 'unplanned';
-      if (testStart || testEnd) {
+      if (closed) {
+        status = 'closed';
+      } else if (testStart || testEnd) {
         if (endMs && endMs < now) status = 'ended';
         else if (startMs && startMs > now) status = 'upcoming';
         else status = 'testing';
@@ -739,6 +742,7 @@
         latestEnd: item.latestEnd,
         testStart,
         testEnd,
+        closed,
         status,
         planUpdatedAt: plan.updatedAt || ''
       });
@@ -746,14 +750,15 @@
 
     const cutoff = addDays(localDate(), -120);
     const visible = items.filter((item) => (
-      item.testStart
+      item.closed
+      || item.testStart
       || item.testEnd
       || item.pendingBugs
       || item.openBugs
       || item.myTaskOpen
       || (item.latestEnd && item.latestEnd >= cutoff)
     ));
-    const rank = { testing: 0, upcoming: 1, unplanned: 2, ended: 3 };
+    const rank = { testing: 0, upcoming: 1, unplanned: 2, ended: 3, closed: 4 };
     visible.sort((a, b) => (
       (rank[a.status] || 0) - (rank[b.status] || 0)
       || String(a.testStart || '9999').localeCompare(String(b.testStart || '9999'))
@@ -829,6 +834,7 @@
       if (item) item.doneBugs.push(bug);
     });
     releaseMap.forEach((release) => {
+      if (release.status === 'closed') return;
       if (!release.testStart && !release.testEnd) return;
       if (release.status === 'ended') return;
       ensureVersion(release.key, release.projects && release.projects[0]);
@@ -838,6 +844,7 @@
     const versionItems = [];
     versions.forEach((item) => {
       const release = releaseMap.get(item.key) || null;
+      if (release && release.status === 'closed') return;
       const allTasks = Array.from(item.tasks.values());
       const doneTasks = allTasks.filter((task) => task.status === 'done').length;
       const myOpenTasks = allTasks.filter((task) => task.status !== 'done' && (typeof task.isMine === 'boolean' ? task.isMine : true)).length;

@@ -49,11 +49,14 @@ function normalizeReleasePlan(raw, existing) {
     error.status = 400;
     throw error;
   }
+  const closedInput = input.closed != null ? input.closed : base.closed;
+  const closed = closedInput === true || closedInput === 1 || closedInput === '1' || closedInput === 'true';
   return {
     key,
     name: text(input.name != null ? input.name : base.name || key, 120).trim() || key,
     testStart,
     testEnd,
+    closed,
     updatedAt: new Date().toISOString()
   };
 }
@@ -233,7 +236,7 @@ class Store {
     const key = normalizeReleaseKey(input.key);
     const existing = this.data.releasePlans[key] || null;
     const plan = normalizeReleasePlan(input, existing);
-    if (!plan.testStart && !plan.testEnd) {
+    if (!plan.testStart && !plan.testEnd && !plan.closed) {
       delete this.data.releasePlans[key];
       this.save();
       return Object.assign({}, plan, { removed: true });

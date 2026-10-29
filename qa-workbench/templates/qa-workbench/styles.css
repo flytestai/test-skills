@@ -9770,3 +9770,52 @@ kbd {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Local release closure */
+.release-card.is-closed {
+  border-left-color: var(--muted-2);
+  background: #fbfcfe;
+}
+
+.release-badge.is-closed {
+  color: var(--muted);
+  background: var(--slate-soft);
+  box-shadow: inset 0 0 0 1px rgba(114, 128, 154, 0.14);
+}
+
+.release-card.is-closed .release-icon {
+  color: var(--muted);
+  background: var(--slate-soft);
+}
+
+.release-card.is-closed .release-progress i {
+  background: var(--muted-2);
+}
+
+.release-window-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+}
+
+.release-window-actions .release-save {
+  min-width: 0;
+  width: 100%;
+}
+
+.release-window-actions .btn {
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.release-field input:disabled {
+  color: var(--muted);
+  background: #f4f6fa;
+  cursor: not-allowed;
+}
+
+@media (max-width: 620px) {
+  .release-window-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

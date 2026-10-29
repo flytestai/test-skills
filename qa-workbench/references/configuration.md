@@ -87,6 +87,7 @@ Start from `config.example.json`. The installer creates this file automatically.
       "name": "2.9.0",
       "testStart": "2026-10-01T09:00",
       "testEnd": "2026-10-31T18:00",
+      "closed": false,
       "updatedAt": "2026-10-29T11:51:30.181Z"
     }
   }
@@ -95,10 +96,12 @@ Start from `config.example.json`. The installer creates this file automatically.
 
 - Version keys come from the first numeric version in an execution or Bug version; `主干` / `trunk` is excluded.
 - `testStart` and `testEnd` use local time in `YYYY-MM-DDTHH:mm` format. `testEnd` cannot be earlier than `testStart`.
-- Clearing both fields removes the plan.
-- Test windows never write back to ZenTao and are not included in the snapshot cache; they are merged at response time.
-- Status is derived at read time: `testing` when the current time is inside the window, `upcoming` before it, `ended` after it, and `unplanned` when no window is set.
-- The 发版管理 page has no separate permission switch. Anyone who can open the local workbench can edit the windows.
+- `closed` is a local flag; a closed release is hidden from the dashboard's awaiting-release queue and can be reopened at any time.
+- Clearing both times removes the plan only when `closed` is also false.
+- Test windows and close flags never write back to ZenTao and are not included in the snapshot cache; they are merged at response time.
+- Status is derived at read time: `closed` when the local flag is set, otherwise `testing` when the current time is inside the window, `upcoming` before it, `ended` after it, and `unplanned` when no window is set.
+- The dashboard `发版：…` line only lists versions with a configured test start or end time.
+- The 发版管理 page has no separate permission switch. Anyone who can open the local workbench can edit the windows and close/reopen releases.
 
 ## Environment variables
 

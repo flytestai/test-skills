@@ -301,6 +301,15 @@ test('releaseCatalog 从执行与 Bug 版本汇总版本，并合并本地测试
   }, {});
   assert.equal(unplanned[0].status, 'unplanned');
   assert.equal(unplanned[0].pendingBugs, 1);
+
+  const closed = Core.releaseCatalog({
+    bugs: [{ id: 'B-4', version: '5.5.0', project: 'PC 客户端', status: 'active', needsMyVerification: true }]
+  }, {
+    '5.5.0': { key: '5.5.0', name: '5.5.0', testStart: '', testEnd: '', closed: true }
+  });
+  assert.equal(closed[0].status, 'closed');
+  assert.equal(closed[0].closed, true);
+  assert.equal(closed[0].pendingBugs, 1);
 });
 
 test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
@@ -320,4 +329,10 @@ test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
   assert.equal(version.testStart, '2026-10-01T09:00');
   assert.equal(version.testEnd, '2099-12-31T18:00');
   assert.equal(version.releaseStatus, 'testing');
+
+  state.tasks[0].execution = 'PC2.8.0版本';
+  state.releases[0].status = 'closed';
+  state.releases[0].closed = true;
+  const closedFocus = Core.dailyFocus(state, FIXED_DATE);
+  assert.equal(closedFocus.versions.items.some((item) => item.key === '2.8.0'), false);
 });

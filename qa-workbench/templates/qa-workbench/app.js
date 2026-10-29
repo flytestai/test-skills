@@ -774,17 +774,17 @@
       return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
     });
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
-    const topVersions = dailyFocus.versions.items.slice(0, 3);
+    const scheduledVersions = dailyFocus.versions.items.filter((item) => item.testStart || item.testEnd);
+    const topVersions = scheduledVersions.slice(0, 3);
     const versionNames = topVersions.map((item) => (
       item.releaseStatus === 'testing' ? `${item.name}（测试中）` : item.name
     )).join(' / ');
     const versionTitle = topVersions.map((item) => {
-      if (!item.testStart && !item.testEnd) return item.name;
       const start = item.testStart ? fmtFullDate(item.testStart) : '未设置';
       const end = item.testEnd ? fmtFullDate(item.testEnd) : '未设置';
       return `${item.name}：${start} 至 ${end}`;
     }).join('\n');
-    const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
+    const moreVersions = scheduledVersions.length > 3 ? ` 等 ${scheduledVersions.length} 个` : '';
     const focusParts = [];
     if (dailyFocus.bugs.pending) focusParts.push(`${dailyFocus.bugs.pending} 个待验证 Bug`);
     if (dailyFocus.versions.pending) focusParts.push(`${dailyFocus.versions.pending} 个版本待发版`);
@@ -835,7 +835,7 @@
           <div class="hero-progress-meta">
             <strong>${dailyFocus.completedCount} / ${dailyFocus.plannedCount} 项已推进</strong>
             <span>待验证 ${dailyFocus.bugs.pending} 个 · 待发版 ${dailyFocus.versions.pending} 个 · 待完成 ${dailyFocus.tasks.pending} 项</span>
-            ${dailyFocus.versions.pending ? `<span class="focus-version-names" title="${esc(versionTitle || versionNames)}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
+            ${topVersions.length ? `<span class="focus-version-names" title="${esc(versionTitle || versionNames)}">发版：${esc(versionNames)}${esc(moreVersions)}</span>` : ''}
             <div class="focus-breakdown" aria-label="当日进度构成">
               <div class="focus-breakdown-row">
                 <span class="focus-breakdown-label">Bug 验证</span>
@@ -1028,7 +1028,8 @@
       testing: { label: '测试中', className: 'is-testing' },
       upcoming: { label: '待开始', className: 'is-upcoming' },
       ended: { label: '已结束', className: 'is-ended' },
-      unplanned: { label: '未排期', className: 'is-unplanned' }
+      unplanned: { label: '未排期', className: 'is-unplanned' },
+      closed: { label: '已关闭', className: 'is-closed' }
     };
     return map[status] || map.unplanned;
   }
@@ -1038,20 +1039,27 @@
     return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) ? raw.slice(0, 16) : '';
   }
 
-  async function saveRelease(key, testStart, testEnd, button) {
+  async function saveRelease(key, testStart, testEnd, button, closed) {
     if (!key) return;
     if (button) {
       button.disabled = true;
       button.dataset.busy = '1';
     }
     try {
+      const payload = { key, testStart, testEnd };
+      if (typeof closed === 'boolean') payload.closed = closed;
       const data = await apiRequest('/api/releases', {
         method: 'POST',
-        body: { key, testStart, testEnd }
+        body: payload
       });
       state.releasePlans = data.releasePlans && typeof data.releasePlans === 'object' ? data.releasePlans : state.releasePlans;
       if (data.releases) state.releases = data.releases;
-      showToast('发版测试时间已保存。');
+      const message = closed === true
+        ? '已关闭该发版，工作台不再展示。'
+        : closed === false
+          ? '已重新开启该发版。'
+          : '发版测试时间已保存。';
+      showToast(message);
       renderView(false);
     } catch (error) {
       showToast(error.message, 'error');
@@ -1066,10 +1074,12 @@
     const releases = releaseItems();
     const testing = releases.filter((item) => item.status === 'testing').length;
     const upcoming = releases.filter((item) => item.status === 'upcoming').length;
-    const planned = releases.filter((item) => item.testStart || item.testEnd).length;
+    const closed = releases.filter((item) => item.status === 'closed').length;
+    const planned = releases.filter((item) => item.status !== 'closed' && (item.testStart || item.testEnd)).length;
 
     const cards = releases.map((item) => {
       const meta = releaseStatusMeta(item.status);
+      const isClosed = item.status === 'closed';
       const projects = (item.projects || []).filter(Boolean);
       const executions = (item.executions || []).filter(Boolean);
       const projectText = projects.length ? projects.join(' / ') : '未归属项目';
@@ -1096,9 +1106,11 @@
             <i style="width:${item.taskProgress}%"></i>
           </div>
           <div class="release-card-foot">
-            <span>${item.testStart || item.testEnd
-              ? `测试窗口：${esc(item.testStart ? fmtFullDate(item.testStart) : '未设置')} 至 ${esc(item.testEnd ? fmtFullDate(item.testEnd) : '未设置')}`
-              : '尚未设置测试开始与结束时间'}</span>
+            <span>${isClosed
+              ? '已在本机关闭，不再计入工作台待发版版本'
+              : item.testStart || item.testEnd
+                ? `测试窗口：${esc(item.testStart ? fmtFullDate(item.testStart) : '未设置')} 至 ${esc(item.testEnd ? fmtFullDate(item.testEnd) : '未设置')}`
+                : '尚未设置测试开始与结束时间'}</span>
             <button class="btn btn-soft btn-sm" type="button" data-action="navigate" data-view="tasks">查看任务 ${icon('arrow-right')}</button>
           </div>
         </div>
@@ -1110,15 +1122,22 @@
           <div class="release-window-fields">
             <label class="release-field">
               <span>测试开始</span>
-              <input type="datetime-local" data-release-field="testStart" value="${esc(toDateTimeInput(item.testStart))}" aria-label="${esc(item.name)} 测试开始时间">
+              <input type="datetime-local" data-release-field="testStart" value="${esc(toDateTimeInput(item.testStart))}" aria-label="${esc(item.name)} 测试开始时间"${isClosed ? ' disabled' : ''}>
             </label>
             <label class="release-field">
               <span>测试结束</span>
-              <input type="datetime-local" data-release-field="testEnd" value="${esc(toDateTimeInput(item.testEnd))}" aria-label="${esc(item.name)} 测试结束时间">
+              <input type="datetime-local" data-release-field="testEnd" value="${esc(toDateTimeInput(item.testEnd))}" aria-label="${esc(item.name)} 测试结束时间"${isClosed ? ' disabled' : ''}>
             </label>
           </div>
-          <button class="btn btn-primary btn-sm release-save" type="button" data-action="save-release" data-key="${esc(item.key)}">${icon('check')}保存测试时间</button>
-          ${item.planUpdatedAt ? `<small class="release-updated">上次保存 ${esc(fmtDateTime(item.planUpdatedAt))}</small>` : '<small class="release-updated">设置后自动同步到工作台</small>'}
+          <div class="release-window-actions">
+            <button class="btn btn-primary btn-sm release-save" type="button" data-action="save-release" data-key="${esc(item.key)}"${isClosed ? ' disabled' : ''}>${icon('check')}保存测试时间</button>
+            <button class="btn btn-sm ${isClosed ? 'btn-soft' : 'btn-danger-ghost'}" type="button" data-action="toggle-release-closed" data-key="${esc(item.key)}" data-closed="${isClosed ? '0' : '1'}">${isClosed ? `${icon('refresh')}重新开启` : `${icon('close')}关闭发版`}</button>
+          </div>
+          ${isClosed
+            ? `<small class="release-updated">关闭状态仅保存在本机</small>`
+            : item.planUpdatedAt
+              ? `<small class="release-updated">上次保存 ${esc(fmtDateTime(item.planUpdatedAt))}</small>`
+              : '<small class="release-updated">设置后自动同步到工作台</small>'}
         </div>
       </article>`;
     }).join('');
@@ -1128,13 +1147,13 @@
         <div class="release-hero-copy">
           <span class="release-eyebrow">${icon('layers')} RELEASE / TEST WINDOW</span>
           <h2>发版管理</h2>
-          <p>版本来自禅道同步的执行与 Bug 版本字段。为版本设置测试开始、结束时间后，工作台的待发版版本会同步显示对应测试窗口。</p>
+          <p>版本来自禅道同步的执行与 Bug 版本字段。只有设置了测试时间的版本会出现在工作台发版列表；测试时间与关闭状态均为本机独立记录。</p>
         </div>
         <div class="release-hero-stats">
           <div><strong>${releases.length}</strong><span>版本</span></div>
           <div><strong>${testing}</strong><span>测试中</span></div>
           <div><strong>${upcoming}</strong><span>待开始</span></div>
-          <div><strong>${planned}</strong><span>已排期</span></div>
+          <div><strong>${closed}</strong><span>已关闭</span></div>
         </div>
         <div class="release-hero-actions">
           <button class="btn btn-primary" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新版本</button>
@@ -1143,8 +1162,8 @@
       </section>
 
       <div class="release-toolbar">
-        <span>${icon('calendar')}共 ${releases.length} 个版本，${planned} 个已设置测试时间</span>
-        <span class="release-toolbar-note">测试时间仅保存在 QDesk 本机，不回写禅道</span>
+        <span>${icon('calendar')}共 ${releases.length} 个版本，${planned} 个已设置测试时间，${closed} 个已关闭</span>
+        <span class="release-toolbar-note">测试时间与关闭状态仅保存在 QDesk 本机，不回写禅道</span>
       </div>
 
       <div class="release-list">
@@ -3727,6 +3746,15 @@
       const startInput = card ? card.querySelector('[data-release-field="testStart"]') : null;
       const endInput = card ? card.querySelector('[data-release-field="testEnd"]') : null;
       saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl);
+      return;
+    }
+    if (action === 'toggle-release-closed') {
+      const card = actionEl.closest('.release-card');
+      const key = actionEl.dataset.key || (card ? card.dataset.releaseKey : '');
+      const startInput = card ? card.querySelector('[data-release-field="testStart"]') : null;
+      const endInput = card ? card.querySelector('[data-release-field="testEnd"]') : null;
+      const closed = actionEl.dataset.closed === '1';
+      saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl, closed);
       return;
     }
     if (action === 'set-task-scope') {
