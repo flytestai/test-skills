@@ -762,9 +762,9 @@
     ));
     const severeAssignedToMe = severeOpenBugs.filter((bug) => bug.isAssignedToMe).length;
     const severeHandedOff = severeOpenBugs.length - severeAssignedToMe;
-    const severeSummary = severeOpenBugs.length
-      ? `我提交的 P0/P1 Bug 中有 ${severeOpenBugs.length} 个未关闭：${severeAssignedToMe} 个指派给我，${severeHandedOff} 个已转交他人。${severeAssignedToMe ? '建议优先处理我名下的高优先级项。' : '当前没有需要我直接处理的 P0/P1 Bug。'}`
-      : '当前没有未关闭的 P0/P1 Bug。';
+    const severeSummary = severeAssignedToMe
+      ? `当前有 ${severeAssignedToMe} 个指派给我的 P0/P1 Bug 未关闭，建议优先处理。`
+      : '当前没有指派给我的未关闭 P0/P1 Bug。';
     const focusOnTrack = dailyFocus.progress >= 60;
     const focusColor = focusOnTrack ? '#5fe0a8' : '#ff6b6b';
     const focusLabel = dailyFocus.progress >= 80 ? '进度较快' : focusOnTrack ? '进度正常' : '进度偏慢';
