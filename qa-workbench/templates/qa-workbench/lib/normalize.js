@@ -358,6 +358,14 @@ function normalizeBug(raw, context) {
     history,
     isMine: Boolean(account && openedBy === account),
     isAssignedToMe: Boolean(account && assignedTo === account),
+    needsMyVerification: Boolean(
+      account
+      && String(bug.status || '') === 'resolved'
+      && (
+        assignedTo === account
+        || (openedBy === account && resolvedBy !== account)
+      )
+    ),
     isOpen: uiStatus !== 'closed',
     source: 'zentao',
     url: buildUrl(ctx.webUrl, `bug-view-${bug.id}.html`)
@@ -436,6 +444,7 @@ function buildAutojobStats(items, account) {
     .filter(Boolean);
   const active = related.filter((bug) => bug.rawStatus === 'active');
   const resolved = related.filter((bug) => bug.rawStatus === 'resolved');
+  const pendingVerification = resolved.filter((bug) => bug.needsMyVerification);
   const closed = related.filter((bug) => bug.rawStatus === 'closed');
   const open = related.filter((bug) => bug.rawStatus !== 'closed');
   const today = localDate();
@@ -448,7 +457,9 @@ function buildAutojobStats(items, account) {
     total: related.length,
     open: open.length,
     active: active.length,
-    resolved: resolved.length,
+    resolved: pendingVerification.length,
+    resolvedByMe: related.filter((bug) => bug.autojobRelation === 'resolved').length,
+    resolvedWaitingOthers: resolved.filter((bug) => !bug.needsMyVerification).length,
     closed: closed.length,
     severeOpen: severe.length,
     highPriorityOpen: highPriority.length,
@@ -458,7 +469,6 @@ function buildAutojobStats(items, account) {
     createdToday: related.filter((bug) => localDate(bug.createdAt) === today).length,
     createdLast7Days: related.filter((bug) => localDate(bug.createdAt) >= sevenDayKey).length,
     assigned: related.filter((bug) => bug.autojobRelation === 'assigned').length,
-    resolvedByMe: related.filter((bug) => bug.autojobRelation === 'resolved').length,
     closedByMe: related.filter((bug) => bug.autojobRelation === 'closed').length,
     allTotal: all.length,
     allOpen: all.filter((bug) => bug.rawStatus !== 'closed').length,

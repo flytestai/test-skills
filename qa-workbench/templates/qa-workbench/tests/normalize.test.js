@@ -189,6 +189,15 @@ test('autojob bugs are tagged and related to the current account', () => {
     resolution: 'fixed'
   });
   assert.equal(autojobRelation(resolved, 'qa_user'), 'resolved');
+  assert.equal(resolved.needsMyVerification, false);
+
+  const assignedBack = autojobBug({
+    id: 9004,
+    status: 'resolved',
+    assignedTo: 'qa_user',
+    resolvedBy: 'dev01'
+  });
+  assert.equal(assignedBack.needsMyVerification, true);
 
   const closed = autojobBug({
     id: 9003,
@@ -211,14 +220,15 @@ test('autojob stats split unresolved, pending verification and closed', () => {
   const stats = buildAutojobStats(rows, 'qa_user');
   assert.equal(stats.total, 4);
   assert.equal(stats.active, 2);
-  assert.equal(stats.resolved, 1);
+  assert.equal(stats.resolved, 0);
+  assert.equal(stats.resolvedByMe, 1);
+  assert.equal(stats.resolvedWaitingOthers, 1);
   assert.equal(stats.closed, 1);
   assert.equal(stats.open, 3);
   assert.equal(stats.severeOpen, 3);
   assert.equal(stats.highPriorityOpen, 3);
   assert.equal(stats.highPriorityActive, 2);
   assert.equal(stats.assigned, 2);
-  assert.equal(stats.resolvedByMe, 1);
   assert.equal(stats.closedByMe, 1);
   assert.equal(stats.allTotal, 6);
   assert.equal(stats.allClosed, 1);

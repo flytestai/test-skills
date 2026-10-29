@@ -115,8 +115,9 @@ Bug scope semantics:
 Customer-feedback summary semantics:
 
 - `active`: `rawStatus = active`, still unresolved.
-- `resolved`: `rawStatus = resolved`, pending verification.
-- `open`: active + resolved.
+- `resolved`: my pending verification only (`needsMyVerification`): assigned to me, or opened by me and resolved by someone else.
+- `resolvedByMe`: resolved by me but assigned back to the reporter; it is not my pending verification.
+- `open`: all related items with `rawStatus != closed`.
 - `closed`: `rawStatus = closed`.
 - `highPriorityOpen`: open items whose ZenTao priority (`pri`) is P0 or P1. AI customer-service Bugs often use severity P3 while carrying the real priority in `pri`; the dashboard ranks by priority.
 

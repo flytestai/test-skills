@@ -624,11 +624,11 @@
       <div class="autojob-copy">
         <div class="autojob-kicker"><span class="live-dot"></span>客服群聊 · AI 自动提取 · 每日关注</div>
         <h2>${esc(account)} 指派给我的客户反馈</h2>
-        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理未解决与 P0/P1，已解决项及时跟进验证。</p>
+        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理未解决与 P0/P1，已解决项等待客服或提交人确认。</p>
       </div>
       <div class="autojob-numbers">
         <div><strong>${stats.active || 0}</strong><span>未解决</span></div>
-        <div><strong>${stats.resolved || 0}</strong><span>待验证</span></div>
+        <div><strong>${stats.resolvedByMe || 0}</strong><span>我已解决</span></div>
         <div><strong>${stats.closed || 0}</strong><span>已关闭</span></div>
         <div class="${stats.highPriorityOpen ? 'is-warn' : ''}"><strong>${stats.highPriorityOpen || 0}</strong><span>P0/P1 未关闭</span></div>
       </div>
@@ -656,7 +656,7 @@
               <small>${esc(bug.project)}<span class="sep"></span>${esc(bug.statusLabel)}<span class="sep"></span>${esc(Core.relativeDay(String(bug.createdAt || '').slice(0, 10), today))}</small>
             </span>
             <span class="autojob-row-meta">
-              ${bug.autojobRelation === 'assigned' ? '<span class="source-badge">待我处理</span>' : '<span class="source-badge is-soft">待验证</span>'}
+              ${bug.autojobRelation === 'assigned' ? '<span class="source-badge">待我处理</span>' : '<span class="source-badge is-soft">我已解决</span>'}
               ${icon('chevron-right')}
             </span>
           </button>`).join('') : `
@@ -804,7 +804,7 @@
                 <div class="empty-state" style="min-height:190px;border:0;box-shadow:none">
                   <div class="empty-icon">${icon('check-circle')}</div>
                   <h3>今天的重点已经清空</h3>
-                  <p>可以检查 Bug 待验证队列，或提前规划下一轮测试。</p>
+                  <p>可以检查分配给我的待验证 Bug，或提前规划下一轮测试。</p>
                   <button class="btn btn-soft btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}刷新禅道任务</button>
                 </div>`}
             </div>
@@ -1106,7 +1106,7 @@
       total: rows.length,
       open: open.length,
       closed: rows.filter((bug) => bug.status === 'closed').length,
-      verifying: rows.filter((bug) => bug.status === 'verifying').length,
+      verifying: rows.filter((bug) => bug.status === 'verifying' && bug.needsMyVerification !== false).length,
       severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
       foundToday: rows.filter((bug) => Core.localDate(bug.createdAt) === today).length,
       status: group((bug) => (Core.BUG_STATUS[bug.status] || Core.BUG_STATUS.new).label),
