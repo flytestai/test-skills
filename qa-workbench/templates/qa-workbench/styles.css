@@ -5661,6 +5661,80 @@ kbd {
   font-size: 11.5px;
 }
 
+.kpi-card.kpi-pending {
+  display: flex;
+  flex-direction: column;
+}
+
+.kpi-pending-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 132px;
+  margin-top: 8px;
+  margin-right: -6px;
+  padding-right: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.kpi-pending-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kpi-pending-item:hover,
+.kpi-pending-item:focus-visible {
+  background: #f4f7fd;
+  outline: none;
+}
+
+.kpi-pending-item .severity-badge {
+  flex: none;
+}
+
+.kpi-pending-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 10.5px;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kpi-pending-item > svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+}
+
+.kpi-pending-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.kpi-pending-empty svg {
+  width: 14px;
+  height: 14px;
+  color: var(--green);
+}
+
 /* ---------- Dashboard grid ---------- */
 
 .dashboard-grid {

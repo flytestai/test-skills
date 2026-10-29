@@ -763,11 +763,13 @@
     const maxSeverity = Math.max(1, ...Object.values(severity));
     const severe = state.bugs.filter((bug) => bug.status !== 'closed' && (bug.severity === 'P0' || bug.severity === 'P1'));
     const activity = Core.recentActivity(state, 5);
-    const reportStatus = m.reportStatus;
-    const reportValue = reportStatus === 'submitted' ? '已提交' : reportStatus === 'draft' ? '草稿待提交' : '未生成';
-    const reportFoot = reportStatus === 'none'
-      ? '自动汇总今日进展'
-      : `${m.taskDoneToday} 项已完成 · ${m.bugFoundToday} 个新 Bug`;
+    const pendingBugs = dailyFocus.bugs.items.slice().sort((a, b) => {
+      const rank = (bug) => (Core.SEVERITY[bug.pri] || Core.SEVERITY[bug.severity] || Core.SEVERITY.P3).order;
+      const diff = rank(a) - rank(b);
+      if (diff) return diff;
+      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    });
+    const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
     const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
     const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
     const focusSummary = [
@@ -851,10 +853,19 @@
           <div class="kpi-value">${m.taskDueToday}<small>项</small></div>
           <div class="kpi-foot">${m.taskOverdue ? `<span class="danger">${m.taskOverdue} 项已逾期</span>` : '<span class="up">暂无逾期任务</span>'} · 今日完成 ${m.taskDoneToday} 项</div>
         </article>
-        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-report" aria-label="查看今日工作日报" title="打开工作日报">
-          <div class="kpi-top"><span class="kpi-label">今日日报</span><span class="kpi-icon tint-teal">${icon('report')}</span></div>
-          <div class="kpi-value is-text">${reportValue}</div>
-          <div class="kpi-foot">${esc(reportFoot)}</div>
+        <article class="kpi-card kpi-pending" aria-label="今日待验证 Bug">
+          <div class="kpi-top"><span class="kpi-label">今日待验证</span><span class="kpi-icon tint-amber">${icon('shield')}</span></div>
+          <div class="kpi-value">${pendingBugs.length}<small>个</small></div>
+          <div class="kpi-foot">${pendingSevere ? `<span class="danger">${pendingSevere} 个 P0/P1</span>` : '<span class="up">暂无 P0/P1</span>'} · 全部未验证 Bug</div>
+          <div class="kpi-pending-list" aria-label="待验证 Bug 列表">
+            ${pendingBugs.length ? pendingBugs.map((bug) => `
+              <button class="kpi-pending-item" type="button" data-action="open-bug" data-id="${esc(bug.id)}" title="${esc(bug.title)}">
+                ${severityBadge(bug.pri || bug.severity)}
+                <span class="kpi-pending-title">${esc(bug.title)}</span>
+                ${icon('chevron-right')}
+              </button>`).join('') : `
+              <div class="kpi-pending-empty">${icon('check-circle')}<span>暂无待验证 Bug</span></div>`}
+          </div>
         </article>
       </section>
 
