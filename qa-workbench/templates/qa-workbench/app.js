@@ -757,8 +757,13 @@
     const focusSummary = focusParts.length
       ? `今天有 ${focusParts.join('、')}。`
       : '今天没有待验证 Bug、待发版版本或待完成任务。';
-    const severeSummary = m.bugSevere
-      ? `当前有 ${m.bugSevere} 个未关闭的 P0/P1 Bug，${dailyFocus.bugs.pending ? '建议优先验证高优先级项' : '建议优先确认阻塞项'}。`
+    const severeOpenBugs = state.bugs.filter((bug) => bug.status !== 'closed' && (
+      bug.severity === 'P0' || bug.severity === 'P1' || bug.pri === 'P0' || bug.pri === 'P1'
+    ));
+    const severeAssignedToMe = severeOpenBugs.filter((bug) => bug.isAssignedToMe).length;
+    const severeHandedOff = severeOpenBugs.length - severeAssignedToMe;
+    const severeSummary = severeOpenBugs.length
+      ? `我提交的 P0/P1 Bug 中有 ${severeOpenBugs.length} 个未关闭：${severeAssignedToMe} 个指派给我，${severeHandedOff} 个已转交他人。${severeAssignedToMe ? '建议优先处理我名下的高优先级项。' : '当前没有需要我直接处理的 P0/P1 Bug。'}`
       : '当前没有未关闭的 P0/P1 Bug。';
     const focusOnTrack = dailyFocus.progress >= 60;
     const focusColor = focusOnTrack ? '#5fe0a8' : '#ff6b6b';
@@ -835,7 +840,7 @@
         <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-bugs" aria-label="查看我提交的未关闭 Bug" title="打开 Bug 跟踪">
           <div class="kpi-top"><span class="kpi-label">我提交的未关闭 Bug</span><span class="kpi-icon tint-red">${icon('bug')}</span></div>
           <div class="kpi-value">${m.bugOpen}<small>个</small></div>
-          <div class="kpi-foot"><span class="${m.bugSevere ? 'danger' : ''}">${m.bugSevere}</span> 个 P0/P1 待处理</div>
+          <div class="kpi-foot">${severeOpenBugs.length ? `<span class="${severeAssignedToMe ? 'danger' : ''}">${severeAssignedToMe}</span> 个在我名下 · ${severeHandedOff} 个已转交` : '<span class="up">暂无 P0/P1</span>'}</div>
         </article>
         <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-due" aria-label="查看今日到期任务" title="打开今日到期任务">
           <div class="kpi-top"><span class="kpi-label">今日到期</span><span class="kpi-icon tint-amber">${icon('calendar')}</span></div>
