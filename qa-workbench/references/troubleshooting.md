@@ -114,7 +114,7 @@ A full sync calls ZenTao once per product and once per execution. Large accounts
 
 The customer-feedback watch adds one `browseType=all` scan per product. Set `watch.productIds` to the products that actually receive AI customer-service Bugs to cut first-sync time; the result is cached for 15 minutes.
 
-Do not reduce `cacheSeconds` below 60 without a reason. Extremely frequent full syncs can burden ZenTao.
+`cacheSeconds` no longer schedules syncs; it only controls the `stale` flag. Auto-sync frequency is controlled by `zentao.syncIntervalMinutes` (default 30) inside `zentao.syncWindow`. Do not set a very small interval without a reason; extremely frequent full syncs can burden ZenTao.
 
 ## Manual sync appears to do nothing
 

@@ -9,7 +9,7 @@ Deploy a self-contained local test workbench. The template is a vanilla HTML/CSS
 
 ## What the workbench provides
 
-- **QDesk dashboard**: clickable KPI cards for pending tasks, open Bugs opened by the account, tasks due today, and today's report.
+- **QDesk dashboard**: clickable KPI cards for pending-verification Bugs, open Bugs opened by the account, tasks due today, and pending tasks.
 - **Tasks**: all tasks from every execution in projects visible to the account, grouped by project; scopes for mine / test / all.
 - **Bugs**: per-product groups; read scope is the union of Bugs opened by the account and assigned to the account. Write scope is stricter: only Bugs whose `assignedTo` is the current account may be changed. Sortable by created time and updated time (newest update first by default).
 - **Customer-feedback watch**: detects Bugs opened by the configured AI/autojob account (default `autojob`) that the current account handled, and shows unresolved, pending-verification and closed counts on the dashboard. It highlights P0/P1 items, lists daily follow-ups, and labels the source as AI-extracted customer-service chat. The source is usually a customer-service group chat where AI extracts customer complaints into ZenTao Bugs. Write scope is unchanged: follow-up reads are broad, but any Bug edit still requires `assignedTo` to be the current account.
