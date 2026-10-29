@@ -1074,38 +1074,6 @@ kbd {
   line-height: 1.7;
 }
 
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 18px;
-}
-
-.hero .btn {
-  min-height: 36px;
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #eef2ff;
-  background: rgba(255, 255, 255, 0.09);
-  box-shadow: none;
-  backdrop-filter: blur(4px);
-}
-
-.hero .btn:hover {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.14);
-}
-
-.hero .btn-primary {
-  border-color: transparent;
-  color: #21305a;
-  background: #fff;
-  box-shadow: 0 7px 20px rgba(9, 19, 46, 0.18);
-}
-
-.hero .btn-primary:hover {
-  background: #f4f7ff;
-}
-
 .hero-progress-wrap {
   position: relative;
   z-index: 1;
@@ -4172,10 +4140,6 @@ kbd {
     font-size: 21px;
   }
 
-  .hero-actions .btn {
-    flex: 1;
-  }
-
   .hero-progress-wrap {
     gap: 12px;
   }
@@ -5482,17 +5446,6 @@ kbd {
   color: #bdc9e7;
   font-size: 13.5px;
   line-height: 1.75;
-}
-
-.hero-actions {
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.hero .btn {
-  min-height: 40px;
-  padding-inline: 15px;
-  font-size: 12.5px;
 }
 
 .hero-progress-wrap {
@@ -7656,10 +7609,6 @@ kbd {
 
   .hero p {
     font-size: 12.5px;
-  }
-
-  .hero-actions .btn {
-    flex: 1;
   }
 
   .kpi-label {
