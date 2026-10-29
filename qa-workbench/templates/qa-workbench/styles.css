@@ -8165,3 +8165,217 @@ kbd {
     display: none;
   }
 }
+
+/* ---- AI customer-service feedback (autojob) ---- */
+.autojob-banner {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 16px;
+  align-items: center;
+  margin-top: 15px;
+  padding: 17px 20px;
+  border: 1px solid #f2d3c1;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff8f3 0%, #fffdfa 58%, #fff 100%);
+  box-shadow: var(--shadow-sm);
+}
+
+.autojob-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: #fff0e6;
+  color: #d95f3b;
+}
+
+.autojob-mark svg { width: 21px; height: 21px; }
+
+.autojob-kicker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #b85536;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+
+.autojob-copy h2 {
+  margin: 3px 0 3px;
+  color: var(--ink);
+  font-size: 16px;
+  letter-spacing: -.01em;
+}
+
+.autojob-copy p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.autojob-numbers {
+  display: flex;
+  gap: 15px;
+  padding: 0 4px;
+}
+
+.autojob-numbers > div {
+  display: flex;
+  min-width: 50px;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.autojob-numbers strong {
+  color: var(--ink);
+  font-size: 21px;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.autojob-numbers span {
+  color: var(--muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.autojob-numbers .is-warn strong { color: #e95366; }
+.autojob-numbers .is-warn span { color: #c24555; }
+
+.autojob-cta { white-space: nowrap; }
+
+.role-badge-warm {
+  background: #fff0e6;
+  color: #b85536;
+}
+
+.autojob-list {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 18px 0;
+}
+
+.autojob-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.autojob-row:last-child { border-bottom: 0; }
+.autojob-row:hover .autojob-row-main strong { color: var(--primary); }
+
+.autojob-row-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.autojob-row-main strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 160ms ease;
+}
+
+.autojob-row-main small {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.autojob-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+}
+
+.autojob-row-meta svg { width: 14px; height: 14px; }
+
+.autojob-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.autojob-empty svg { width: 17px; height: 17px; color: #11aa99; }
+
+.autojob-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 18px 14px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.autojob-foot b { color: var(--ink); }
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: #fff0e6;
+  color: #b85536;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.source-badge.is-soft {
+  background: #eef2ff;
+  color: #5b75f2;
+}
+
+@media (max-width: 1180px) {
+  .autojob-banner {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .autojob-cta {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .autojob-banner {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 11px;
+    padding: 14px;
+  }
+  .autojob-numbers {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    padding: 4px 0 0;
+  }
+  .autojob-numbers strong { font-size: 18px; }
+  .autojob-foot { flex-wrap: wrap; }
+}

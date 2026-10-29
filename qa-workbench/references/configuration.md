@@ -34,6 +34,13 @@ Start from `config.example.json`. The installer creates this file automatically.
     "bugModules": [
       { "id": "0", "name": "未指定" }
     ]
+  },
+  "watch": {
+    "enabled": true,
+    "autojobAccounts": ["autojob"],
+    "productIds": [],
+    "label": "AI 客服提取",
+    "description": "来自客服群聊天记录，自动提取为禅道 Bug"
   }
 }
 ```
@@ -52,6 +59,10 @@ Start from `config.example.json`. The installer creates this file automatically.
 | `zentao.cliPath` | no | Optional explicit path to the ZenTao CLI JS entry |
 | `zentao.moduleNames` | no | Map of module IDs to display names |
 | `zentao.bugModules` | no | Optional module choices in the Bug creation dialog |
+| `watch.enabled` | no | Enable the AI customer-service feedback dashboard, default `true` |
+| `watch.autojobAccounts` | no | Accounts that create Bugs from customer-service chat, default `["autojob"]` |
+| `watch.productIds` | no | Product IDs to scan for autojob Bugs; empty scans all visible products |
+| `watch.label` / `watch.description` | no | Dashboard label and source description |
 
 \* If `tester.account` is empty, all data can still be listed, but "my tasks" and "my Bugs" scopes will be empty. The connection form sets this automatically when a saved connection is used.
 
@@ -66,6 +77,8 @@ Start from `config.example.json`. The installer creates this file automatically.
 | `ZENTAO_ACCOUNT` | Overrides `tester.account` |
 | `ZENTAO_PRODUCT_ID` | Compatibility fallback for Bug creation only |
 | `ZENTAO_CLI_JS` | Explicit ZenTao CLI entry path |
+| `QDESK_AUTOJOB_ACCOUNTS` | Comma-separated AI customer-service accounts, default `autojob` |
+| `QDESK_AUTOJOB_PRODUCTS` | Comma-separated product IDs to scan; empty means all |
 | `ZENTAO_URL`, `ZENTAO_TOKEN`, `ZENTAO_PASSWORD` | Read by the ZenTao CLI, not logged by QDesk |
 
 ## Account resolution order
@@ -88,11 +101,15 @@ A full sync performs:
    - `bug --product=<id> --browseType=openedbyme`
    - `bug --product=<id> --browseType=assignedtome`
    - merge by Bug ID and de-duplicate.
-5. For every execution: `task --executionID=<id>`.
+5. For every configured watch product (or all products):
+   - `bug --product=<id> --browseType=all`
+   - keep Bugs whose `openedBy` is in `watch.autojobAccounts`
+   - retain the current account's items by `assignedTo` (active), `resolvedBy` (resolved) or `closedBy` (closed), because closed Bugs lose their original assignee.
+6. For every execution: `task --executionID=<id>`.
 
-This intentionally avoids the ZenTao 22.4 unsupported `my tasks` and `my bugs` commands.
+This intentionally avoids the ZenTao 22.4 unsupported `my tasks`, `my bugs`, `bug --browseType=closed` and `closedbyme` commands. The customer-feedback scan uses `browseType=all` and filters locally.
 
-"All Bugs" in the UI means **the account-related union** (opened by me + assigned to me), not every Bug in the company.
+"All Bugs" in the UI means **the account-related union** (opened by me + assigned to me + AI customer-service Bugs I handled), not every Bug in the company.
 
 ## Caching and concurrency
 
@@ -101,6 +118,8 @@ This intentionally avoids the ZenTao 22.4 unsupported `my tasks` and `my bugs` c
 - `/api/sync` triggers a background refresh and returns immediately.
 - A failed sync keeps the previous snapshot and retries after roughly 60 seconds.
 - List-level caches (products/projects/executions) are in memory; the full last successful snapshot is persisted.
+- The customer-feedback scan is cached for 15 minutes independently of the main snapshot. A manual sync (`force`) refreshes it; normal page refreshes reuse the cache.
+- Scanning all products for `browseType=all` is the slowest part of the first sync. Set `watch.productIds` to the products that actually receive AI customer-service Bugs (for example `[53, 55]`) to shorten it.
 
 ## Customizing module names
 

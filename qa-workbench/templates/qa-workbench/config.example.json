@@ -17,5 +17,12 @@
     "bugModules": [
       { "id": "0", "name": "未指定" }
     ]
+  },
+  "watch": {
+    "enabled": true,
+    "autojobAccounts": ["autojob"],
+    "productIds": [],
+    "label": "AI 客服提取",
+    "description": "来自客服群聊天记录，自动提取为禅道 Bug"
   }
 }

@@ -14,7 +14,7 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | GET | `/api/bootstrap?meta=1` | Compact sync state and counts only; use for polling |
 | GET | `/api/bootstrap?refresh=1` | Return current snapshot and trigger a background refresh |
 | POST | `/api/sync` | Start a forced background sync; returns HTTP 202 immediately |
-| GET | `/api/bugs?scope=opened\|assigned\|all` | Bug list and stats for the requested scope |
+| GET | `/api/bugs?scope=opened\|assigned\|autojob\|all` | Bug list and stats for the requested scope |
 | GET | `/api/bugs/stats?scope=…` | Bug classification stats and scope totals |
 | POST | `/api/bugs` | Create a formal ZenTao Bug through the CLI |
 | GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats |
@@ -69,10 +69,24 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
   "tasks": [],
   "bugs": [],
   "bugStats": {},
-  "bugScopeStats": { "opened": {}, "assigned": {}, "all": {} },
+  "bugScopeStats": { "opened": {}, "assigned": {}, "autojob": {}, "all": {} },
+  "autojob": {
+    "enabled": true,
+    "accounts": ["autojob"],
+    "label": "AI 客服提取",
+    "summary": {
+      "active": 0,
+      "resolved": 0,
+      "closed": 0,
+      "open": 0,
+      "highPriorityOpen": 0,
+      "createdToday": 0
+    },
+    "bugs": []
+  },
   "taskStats": { "mine": {}, "test": {}, "all": {} },
   "scopeCounts": {
-    "bugs": { "opened": 0, "assigned": 0, "all": 0 },
+    "bugs": { "opened": 0, "assigned": 0, "autojob": 0, "all": 0 },
     "tasks": { "mine": 0, "test": 0, "all": 0 }
   },
   "reports": [],
@@ -95,7 +109,16 @@ Bug scope semantics:
 
 - `opened`: `bug.isMine` (opened by the configured account).
 - `assigned`: `bug.isAssignedToMe`.
-- `all`: union of account-related Bugs.
+- `autojob`: AI customer-service Bugs related to the configured account; `autojobRelation` is `assigned`, `resolved` or `closed`.
+- `all`: union of account-related Bugs plus related AI customer-service Bugs.
+
+Customer-feedback summary semantics:
+
+- `active`: `rawStatus = active`, still unresolved.
+- `resolved`: `rawStatus = resolved`, pending verification.
+- `open`: active + resolved.
+- `closed`: `rawStatus = closed`.
+- `highPriorityOpen`: open items whose ZenTao priority (`pri`) is P0 or P1. AI customer-service Bugs often use severity P3 while carrying the real priority in `pri`; the dashboard ranks by priority.
 
 Task scope semantics:
 

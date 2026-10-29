@@ -1,6 +1,6 @@
 ---
 name: qa-workbench
-description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, daily reports, local snapshots and Windows auto-start. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, or want to run this workbench for another account or team."
+description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, daily reports, local snapshots and Windows auto-start. It also watches Bugs created by an AI customer-service account (default autojob) from customer-service group chats and shows unresolved, pending-verification, closed and high-priority counts on the dashboard for daily follow-up. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, a customer-feedback tracker, or want to run this workbench for another account or team."
 ---
 
 # QDesk QA Workbench
@@ -12,6 +12,7 @@ Deploy a self-contained local test workbench. The template is a vanilla HTML/CSS
 - **QDesk dashboard**: clickable KPI cards for pending tasks, open Bugs opened by the account, tasks due today, and today's report.
 - **Tasks**: all tasks from every execution in projects visible to the account, grouped by project; scopes for mine / test / all.
 - **Bugs**: per-product groups; read scope is the union of Bugs opened by the account and assigned to the account. Write scope is stricter: only Bugs whose `assignedTo` is the current account may be changed. Sortable by created time and updated time (newest update first by default).
+- **Customer-feedback watch**: detects Bugs opened by the configured AI/autojob account (default `autojob`) that the current account handled, and shows unresolved, pending-verification and closed counts on the dashboard. It highlights P0/P1 items, lists daily follow-ups, and labels the source as AI-extracted customer-service chat. The source is usually a customer-service group chat where AI extracts customer complaints into ZenTao Bugs. Write scope is unchanged: follow-up reads are broad, but any Bug edit still requires `assignedTo` to be the current account.
 - **Reports**: daily report draft generated from the day's tasks and Bugs, with Markdown copy and exports.
 - **Background sync**: the page renders the last local snapshot immediately; ZenTao sync runs silently in the background.
 - **Connection setup**: only URL, account, password and display name. Product IDs and project IDs are discovered automatically.
@@ -58,6 +59,27 @@ node <skill_dir>/scripts/install_workbench.mjs \
 The installer copies the application, creates `config.json`, creates `data/`, and patches the Windows launcher health-check port. It has no npm dependencies.
 
 Use `--force` only when updating an existing installation. Existing `data/` and `config.json` are preserved.
+
+### Customer-feedback watch (autojob)
+
+The optional `watch` block tracks Bugs created by an AI customer-service account:
+
+```json
+"watch": {
+  "enabled": true,
+  "autojobAccounts": ["autojob"],
+  "productIds": [],
+  "label": "AI 客服提取",
+  "description": "来自客服群聊天记录，自动提取为禅道 Bug"
+}
+```
+
+- `autojobAccounts`: accounts that create Bugs from customer-service chat logs. Default `["autojob"]`.
+- `productIds`: optional product IDs to scan. An empty array scans every visible product; set IDs such as `[53, 55]` to reduce sync time.
+- The watch counts only Bugs related to the current account: actively assigned to it, resolved by it, or closed by it. Closed Bugs lose their original `assignedTo`, so `resolvedBy` / `closedBy` are used as the ownership signal.
+- `browseType=closed` and `closedbyme` return empty on some ZenTao versions, so the scan uses `browseType=all` per configured product and filters by `openedBy` locally. The autojob scan is cached separately for 15 minutes.
+- Environment overrides: `QDESK_AUTOJOB_ACCOUNTS=autojob` and `QDESK_AUTOJOB_PRODUCTS=53,55`.
+- The dashboard shows unresolved (active), pending verification (resolved), closed, and high-priority (P0/P1) counts. The workbench also adds these items to the daily report and notification bell.
 
 ### 3. Verify the template before starting
 
@@ -161,7 +183,8 @@ Sync flow:
 3. In the background, list products, projects and executions.
 4. For each product, query Bugs with `--browseType=openedbyme` and `--browseType=assignedtome`.
 5. For each execution, query tasks.
-6. Group Bugs by product and tasks by project; atomically replace the snapshot.
+6. In parallel, scan configured autojob products with `--browseType=all`, keep Bugs opened by the autojob account, and compute the customer-feedback summary (cached 15 minutes).
+7. Group Bugs by product and tasks by project; atomically replace the snapshot.
 
 ## Safety tooling
 
@@ -193,4 +216,5 @@ node scripts/plan-bulk-close.mjs --product 13 --status resolved --output close-p
 - [ ] User knows how to open the connection form and that product/project IDs are not required.
 - [ ] User knows existing ZenTao records are read-only.
 - [ ] User knows any Bug write is limited to Bugs assigned to the current account, and bulk close requires a confirmed list.
+- [ ] The dashboard shows the customer-feedback watch counts (unresolved / pending verification / closed / P0-P1), or the user explicitly disabled `watch.enabled`.
 - [ ] If auto-start was requested, the scheduled task exists and starts the service.

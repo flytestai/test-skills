@@ -70,9 +70,19 @@ The workbench intentionally syncs only:
 
 - Bugs opened by the account (`openedbyme`)
 - Bugs assigned to the account (`assignedtome`)
-- The de-duplicated union of those two sets
+- AI customer-service Bugs opened by `watch.autojobAccounts` that are assigned to, resolved by, or closed by the account
+- The de-duplicated union of those sets
 
 It is not a company-wide Bug export. If broader scope is required, that is a custom change and must respect ZenTao permissions.
+
+## Customer-feedback counts are zero or missing
+
+- Confirm `watch.enabled` is not `false`.
+- Confirm the AI account name matches ZenTao exactly, usually `autojob`. Accounts are case-sensitive.
+- Closed Bugs lose their original assignee (`assignedTo=closed`), so the workbench counts them through `closedBy` / `resolvedBy`. If someone else closed or resolved the Bug, it will not appear under this account.
+- If `watch.productIds` is set, the AI customer-service Bug must be in one of those products. Clear the array to scan every visible product.
+- `bug --browseType=closed` and `closedbyme` return empty on ZenTao 22.4; the workbench uses `browseType=all` and filters locally. This is expected.
+- The scan is cached for 15 minutes. Click **立即同步** or call `POST /api/sync` to force a refresh.
 
 ## Sync is slow
 
@@ -81,6 +91,8 @@ A full sync calls ZenTao once per product and once per execution. Large accounts
 - the page reads a cached snapshot first;
 - polling uses `?meta=1`;
 - manual sync returns HTTP 202.
+
+The customer-feedback watch adds one `browseType=all` scan per product. Set `watch.productIds` to the products that actually receive AI customer-service Bugs to cut first-sync time; the result is cached for 15 minutes.
 
 Do not reduce `cacheSeconds` below 60 without a reason. Extremely frequent full syncs can burden ZenTao.
 

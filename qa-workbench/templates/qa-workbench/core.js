@@ -712,8 +712,12 @@
       .slice(0, 5);
     const riskyTasks = tasks.filter((task) => task.status === 'blocked' || isTaskOverdue(task, day));
     const riskyBugs = bugs.filter((bug) => isBugOpen(bug) && (bug.severity === 'P0' || bug.severity === 'P1'));
+    const autojobActive = (state.autojobBugs || []).filter(
+      (bug) => bug.rawStatus === 'active' && bug.autojobRelation === 'assigned'
+    );
+    const autojobRisky = autojobActive.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1');
 
-    return { day, doneTasks, foundBugs, verifiedBugs, closedBugs, ongoingTasks, nextTasks, riskyTasks, riskyBugs };
+    return { day, doneTasks, foundBugs, verifiedBugs, closedBugs, ongoingTasks, nextTasks, riskyTasks, riskyBugs, autojobActive, autojobRisky };
   }
 
   function taskLine(task) {
@@ -751,6 +755,10 @@
       bugParts.push('【已验证】');
       bugParts.push(...verifiedOnly.map((bug) => bugLine(bug, '验证通过 ')));
     }
+    if (data.autojobActive && data.autojobActive.length) {
+      bugParts.push('【客服反馈·待处理】');
+      bugParts.push(...data.autojobActive.slice(0, 10).map((bug) => bugLine(bug)));
+    }
 
     const ongoingParts = data.ongoingTasks.map((task) => {
       const suffix = task.status === 'blocked' ? ' · 已阻塞' : task.status === 'doing' ? ' · 进行中' : '';
@@ -767,12 +775,18 @@
     data.riskyBugs.forEach((bug) => {
       riskParts.push(`- ${bug.id} [${bug.severity}] ${bug.title}：当前${BUG_STATUS[bug.status].label}`);
     });
+    (data.autojobRisky || []).forEach((bug) => {
+      riskParts.push(`- ${bug.id} [${bug.pri}] ${bug.title}：客服反馈待处理（${bug.project}）`);
+    });
 
     const summaryBits = [];
     summaryBits.push(`今日完成 ${data.doneTasks.length} 项任务`);
     summaryBits.push(`推进 ${data.ongoingTasks.length} 项`);
     if (data.foundBugs.length) summaryBits.push(`新发现 ${data.foundBugs.length} 个 Bug`);
     if (data.verifiedBugs.length) summaryBits.push(`验证 ${data.verifiedBugs.length} 个 Bug`);
+    if (data.autojobActive && data.autojobActive.length) {
+      summaryBits.push(`客服反馈待处理 ${data.autojobActive.length} 条`);
+    }
     const summary = summaryBits.join('，') + '。';
 
     return {

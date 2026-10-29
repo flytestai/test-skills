@@ -6,7 +6,7 @@
 - 后端：Node.js 原生 HTTP 服务，无第三方运行时依赖。
 - 数据来源：本机 `zentao` CLI。
 - 连接配置：只需 **ZenTao URL、账号、密码、显示姓名**，不需要产品 ID 或任务项目 ID。
-- 数据范围：账号可访问的全部产品、项目与执行；Bug 取「我提交的 + 指派给我」，任务取可访问执行下的全部任务。
+- 数据范围：账号可访问的全部产品、项目与执行；Bug 取「我提交的 + 指派给我 + 我处理过的 AI 客服 Bug」，任务取可访问执行下的全部任务。
 - 打开体验：优先读取本地快照，禅道同步在后台静默执行。
 - 默认只监听 `127.0.0.1`。
 
@@ -56,6 +56,8 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - 今日聚焦、质量雷达、最近动态和本周测试节奏。
 - 四张指标卡可点击：待办任务、我提交的未关闭 Bug、今日到期、今日日报。
 - 指标卡支持键盘 Enter / 空格操作。
+- **客服反馈横幅**：显示 `autojob` 等 AI 客服账号指派给我、或由我解决 / 关闭的 Bug 数量，包括未解决、待验证、已关闭和 P0/P1 未关闭；下方「客服反馈跟进」按优先级列出待处理项，提醒每天及时跟进。
+- 客服反馈同步写入通知铃铛和当天工作日报。
 
 ### 任务管理（只读）
 
@@ -68,7 +70,8 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 
 ### Bug 跟踪
 
-- Bug 范围：我提交的 / 指派给我 / 全部（两者并集）。
+- Bug 范围：我提交的 / 指派给我 / 客服反馈 / 全部（账号相关并集）。
+- 「客服反馈」中的 Bug 带有「AI客服」来源标记，标题下方展示禅道优先级。
 - 按产品归类，展示每个产品的 Bug 总量、未关闭量、P0/P1 未关闭数、我提交数与指派给我数。
 - 默认按更新时间从新到旧；创建时间、更新时间均支持升序 / 降序。
 - 同时展示创建时间与更新时间，移动端自动切换为卡片。
@@ -105,8 +108,9 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 1. 读取全部可访问产品。
 2. 读取全部项目与执行，并保留属于可访问项目的执行。
 3. 对每个产品分别查询 `openedbyme` 与 `assignedtome` 的 Bug，按 ID 去重合并。
-4. 对每个执行查询任务。
-5. 生成按产品分组的 Bug 统计和按项目分组的任务统计。
+4. 并行扫描 `watch.autojobAccounts` 创建的 Bug（默认 `autojob`），筛选出指派给我、由我解决或由我关闭的记录；该扫描结果缓存 15 分钟。
+5. 对每个执行查询任务。
+6. 生成按产品分组的 Bug 统计、按项目分组的任务统计和客服反馈统计。
 
 ## 配置
 
@@ -123,6 +127,10 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 | `zentao.moduleNames` | 可选：模块 ID 到显示名的映射 |
 | `zentao.bugModules` | 可选：登记 Bug 时可选的模块列表 |
 | `zentao.cliPath` | 可选：自定义 `zentao.js` 路径 |
+| `watch.enabled` | 是否启用客服反馈看板，默认 `true` |
+| `watch.autojobAccounts` | AI 客服账号列表，默认 `["autojob"]` |
+| `watch.productIds` | 可选：只扫描这些产品 ID；空数组表示全部可见产品 |
+| `watch.label` / `watch.description` | 看板标题与来源说明 |
 
 环境变量：
 
@@ -130,6 +138,8 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - `ZENTAO_ACCOUNT`
 - `ZENTAO_PRODUCT_ID`（仅作为创建 Bug 的默认产品回退）
 - `ZENTAO_CLI_JS`
+- `QDESK_AUTOJOB_ACCOUNTS`（逗号分隔，默认 `autojob`）
+- `QDESK_AUTOJOB_PRODUCTS`（逗号分隔产品 ID，留空表示全部）
 
 ## Windows 开机自启
 
@@ -157,7 +167,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 | POST | `/api/zentao/connection` | 保存连接并启动后台同步 |
 | GET | `/api/bootstrap` | 立即返回本地快照；`?meta=1` 返回同步状态；`?refresh=1` 触发后台刷新 |
 | POST | `/api/sync` | 发起后台同步，返回 `202` |
-| GET | `/api/bugs?scope=opened\|assigned\|all` | Bug 列表与统计 |
+| GET | `/api/bugs?scope=opened\|assigned\|autojob\|all` | Bug 列表与统计 |
 | POST | `/api/bugs` | 创建正式 Bug |
 | GET | `/api/tasks?scope=mine\|test\|all` | 任务列表与统计 |
 | GET / POST | `/api/reports` | 日报读取与保存 |

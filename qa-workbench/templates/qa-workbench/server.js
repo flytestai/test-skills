@@ -19,7 +19,9 @@ const {
   BUG_TYPES,
   normalizeTask,
   normalizeBug,
+  autojobRelation,
   buildBugStats,
+  buildAutojobStats,
   buildTaskStats,
   userMap,
   severityRaw,
@@ -56,6 +58,13 @@ const DEFAULT_CONFIG = {
     cliPath: '',
     moduleNames: {},
     bugModules: [{ id: '0', name: '未指定' }]
+  },
+  watch: {
+    enabled: true,
+    autojobAccounts: ['autojob'],
+    productIds: [],
+    label: 'AI 客服提取',
+    description: '来自客服群聊天记录，自动提取为禅道 Bug'
   }
 };
 
@@ -112,6 +121,14 @@ function loadConfig() {
     config.zentao.taskProjectIds = String(process.env.ZENTAO_TASK_PROJECT_IDS)
       .split(',').map((id) => id.trim()).filter(Boolean);
   }
+  if (process.env.QDESK_AUTOJOB_ACCOUNTS) {
+    config.watch.autojobAccounts = String(process.env.QDESK_AUTOJOB_ACCOUNTS)
+      .split(',').map((account) => account.trim()).filter(Boolean);
+  }
+  if (process.env.QDESK_AUTOJOB_PRODUCTS) {
+    config.watch.productIds = String(process.env.QDESK_AUTOJOB_PRODUCTS)
+      .split(',').map((id) => id.trim()).filter(Boolean);
+  }
   config.server.port = Math.max(1, Math.min(65535, Number(config.server.port) || 4173));
   config.server.host = config.server.host || '127.0.0.1';
   config.tester.account = String(config.tester.account || '').trim();
@@ -123,6 +140,13 @@ function loadConfig() {
   config.zentao.refreshCooldownMs = Math.max(0, Number(config.zentao.refreshCooldownMs) || 0);
   config.zentao.openedBuild = String(config.zentao.openedBuild || 'trunk');
   config.zentao.openedBuildLabel = String(config.zentao.openedBuildLabel || '主干');
+  config.watch.enabled = config.watch.enabled !== false;
+  config.watch.autojobAccounts = (config.watch.autojobAccounts || [])
+    .map((account) => String(account).trim()).filter(Boolean);
+  config.watch.productIds = (config.watch.productIds || [])
+    .map((id) => String(id)).filter((id) => /^\d+$/.test(id));
+  config.watch.label = String(config.watch.label || 'AI 客服提取');
+  config.watch.description = String(config.watch.description || '来自客服群聊天记录，自动提取为禅道 Bug');
   return config;
 }
 
@@ -142,7 +166,8 @@ const caches = {
   users: { at: 0, ttl: 60 * 60 * 1000, value: null },
   products: { at: 0, ttl: 10 * 60 * 1000, value: null },
   projects: { at: 0, ttl: 10 * 60 * 1000, value: null },
-  executions: { at: 0, ttl: 10 * 60 * 1000, value: null }
+  executions: { at: 0, ttl: 10 * 60 * 1000, value: null },
+  autojob: { at: 0, ttl: 15 * 60 * 1000, value: null }
 };
 
 let snapshot = null;
@@ -304,6 +329,60 @@ function primaryProductId(products) {
   return ids[0] || String(config.zentao.productId || '');
 }
 
+async function loadAutojobBugs(products, users, webUrl, moduleNames, force) {
+  const configured = Array.from(new Set(config.watch.autojobAccounts || []));
+  const known = configured.filter((account) => users.has(account));
+  if (!config.watch.enabled || !known.length) {
+    return { enabled: false, accounts: known, items: [], warnings: [], scannedProducts: 0 };
+  }
+  const accountSet = new Set(known);
+  const wanted = new Set(config.watch.productIds || []);
+  const selected = wanted.size
+    ? (products || []).filter((product) => wanted.has(String(product.id)))
+    : (products || []);
+
+  return cached(caches.autojob, force, async () => {
+    const warnings = [];
+    const bundles = await mapLimit(selected, 2, async (product) => {
+      try {
+        const result = await listBugs(product.id, {
+          ...cliOptions,
+          browseType: 'all',
+          perPage: 1000,
+          maxPages: 20
+        });
+        const bugs = (result.items || [])
+          .filter((raw) => raw && accountSet.has(String(raw.openedBy || '')))
+          .map((raw) => normalizeBug(raw, {
+            users,
+            account: config.tester.account,
+            productId: product.id,
+            productName: product.name,
+            moduleNames,
+            webUrl,
+            autojobAccounts: accountSet
+          }));
+        return { bugs };
+      } catch (error) {
+        warnings.push(`产品「${product.name}」客服反馈扫描失败：${error.message}`);
+        return { bugs: [] };
+      }
+    });
+    const deduped = new Map();
+    bundles.forEach((bundle) => {
+      bundle.bugs.forEach((bug) => deduped.set(String(bug.id), bug));
+    });
+    return {
+      enabled: true,
+      accounts: known,
+      items: Array.from(deduped.values()),
+      warnings,
+      scannedProducts: selected.length,
+      scannedAt: new Date().toISOString()
+    };
+  });
+}
+
 async function buildSnapshot(force) {
   const start = Date.now();
   const warnings = [];
@@ -347,40 +426,66 @@ async function buildSnapshot(force) {
     !accessibleProjectIds.size || accessibleProjectIds.has(String(exec.project))
   ));
 
-  const bugBundles = await mapLimit(productRows, 3, async (product) => {
-    const bundleWarnings = [];
-    const read = (browseType) => listBugs(product.id, {
-      ...cliOptions,
-      browseType
-    }).catch((error) => {
-      bundleWarnings.push(`产品「${product.name}」${browseType === 'assignedtome' ? '指派给我' : '我提交的'} Bug 读取失败：${error.message}`);
-      return { items: [] };
-    });
-    const [openedResult, assignedResult] = await Promise.all([
-      read('openedbyme'),
-      read('assignedtome')
-    ]);
-    const unique = new Map();
-    [...(openedResult.items || []), ...(assignedResult.items || [])].forEach((raw) => {
-      if (raw && raw.id != null) unique.set(String(raw.id), raw);
-    });
-    const bugs = Array.from(unique.values()).map((raw) => normalizeBug(raw, {
-      users,
-      account: config.tester.account,
-      productId: product.id,
-      productName: product.name,
-      moduleNames,
-      webUrl
-    }));
-    return { product, bugs, warnings: bundleWarnings };
-  });
+  const autojobAccountSet = new Set(config.watch.autojobAccounts || []);
+  const [bugBundles, autojobResult] = await Promise.all([
+    mapLimit(productRows, 3, async (product) => {
+      const bundleWarnings = [];
+      const read = (browseType) => listBugs(product.id, {
+        ...cliOptions,
+        browseType
+      }).catch((error) => {
+        bundleWarnings.push(`产品「${product.name}」${browseType === 'assignedtome' ? '指派给我' : '我提交的'} Bug 读取失败：${error.message}`);
+        return { items: [] };
+      });
+      const [openedResult, assignedResult] = await Promise.all([
+        read('openedbyme'),
+        read('assignedtome')
+      ]);
+      const unique = new Map();
+      [...(openedResult.items || []), ...(assignedResult.items || [])].forEach((raw) => {
+        if (raw && raw.id != null) unique.set(String(raw.id), raw);
+      });
+      const bugs = Array.from(unique.values()).map((raw) => normalizeBug(raw, {
+        users,
+        account: config.tester.account,
+        productId: product.id,
+        productName: product.name,
+        moduleNames,
+        webUrl,
+        autojobAccounts: autojobAccountSet
+      }));
+      return { product, bugs, warnings: bundleWarnings };
+    }),
+    loadAutojobBugs(productRows, users, webUrl, moduleNames, force).catch((error) => {
+      warnings.push(`客服反馈扫描失败：${error.message}`);
+      return { enabled: false, accounts: [], items: [], warnings: [], scannedProducts: 0 };
+    })
+  ]);
+  warnings.push(...(autojobResult.warnings || []));
 
   const globalBugs = new Map();
   bugBundles.forEach((bundle) => {
     warnings.push(...bundle.warnings);
     bundle.bugs.forEach((bug) => globalBugs.set(String(bug.id), bug));
   });
+  const account = config.tester.account;
+  const autojobBugs = (autojobResult.items || [])
+    .map((bug) => {
+      const relation = autojobRelation(bug, account);
+      return relation ? { ...bug, autojobRelation: relation } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => {
+      const priority = ['P0', 'P1', 'P2', 'P3'];
+      const byPriority = priority.indexOf(a.pri) - priority.indexOf(b.pri);
+      if (byPriority) return byPriority;
+      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+    });
+  autojobBugs.forEach((bug) => {
+    if (!globalBugs.has(String(bug.id))) globalBugs.set(String(bug.id), bug);
+  });
   const bugs = Array.from(globalBugs.values()).sort(compareBug);
+  const autojobSummary = buildAutojobStats(autojobResult.items || [], account);
 
   const taskWarnings = [];
   const taskBundles = await mapLimit(executionRows, 4, async (exec) => {
@@ -486,6 +591,9 @@ async function buildSnapshot(force) {
       bugs: bugs.length,
       myBugs: openedBugs.length,
       assignedBugs: assignedBugs.length,
+      autojobBugs: autojobBugs.length,
+      autojobOpen: autojobSummary.open,
+      autojobClosed: autojobSummary.closed,
       products: productRows.length,
       projects: projectRows.length,
       executions: executionRows.length
@@ -503,7 +611,14 @@ async function buildSnapshot(force) {
     projects: projectGroups,
     taskProjectIds: projectRows.map((project) => project.id),
     cacheSeconds: config.zentao.cacheSeconds,
-    connection: currentConnection(webUrl)
+    connection: currentConnection(webUrl),
+    autojob: {
+      enabled: Boolean(autojobResult.enabled),
+      accounts: autojobResult.accounts || [],
+      label: config.watch.label,
+      scannedProducts: autojobResult.scannedProducts || 0,
+      scannedAt: autojobResult.scannedAt || null
+    }
   };
 
   const data = {
@@ -520,7 +635,18 @@ async function buildSnapshot(force) {
     bugScopeStats: {
       opened: buildBugStats(openedBugs),
       assigned: buildBugStats(assignedBugs),
-      all: buildBugStats(bugs)
+      all: buildBugStats(bugs),
+      autojob: buildBugStats(autojobBugs)
+    },
+    autojob: {
+      enabled: Boolean(autojobResult.enabled),
+      accounts: autojobResult.accounts || [],
+      label: config.watch.label,
+      description: config.watch.description,
+      scannedProducts: autojobResult.scannedProducts || 0,
+      scannedAt: autojobResult.scannedAt || null,
+      summary: autojobSummary,
+      bugs: autojobBugs
     },
     taskStats: {
       all: buildTaskStats(taskRows),
@@ -531,7 +657,8 @@ async function buildSnapshot(force) {
       bugs: {
         opened: openedBugs.length,
         assigned: assignedBugs.length,
-        all: bugs.length
+        all: bugs.length,
+        autojob: autojobBugs.length
       },
       tasks: {
         mine: taskMine.length,
@@ -617,10 +744,20 @@ function emptySnapshot() {
     tasks: [],
     bugs: [],
     bugStats: emptyStats,
-    bugScopeStats: { opened: emptyStats, assigned: emptyStats, all: emptyStats },
+    bugScopeStats: { opened: emptyStats, assigned: emptyStats, all: emptyStats, autojob: emptyStats },
+    autojob: {
+      enabled: false,
+      accounts: config.watch.autojobAccounts || [],
+      label: config.watch.label,
+      description: config.watch.description,
+      scannedProducts: 0,
+      scannedAt: null,
+      summary: buildAutojobStats([], account),
+      bugs: []
+    },
     taskStats: { all: buildTaskStats([]), mine: buildTaskStats([]), test: buildTaskStats([]) },
     scopeCounts: {
-      bugs: { opened: 0, assigned: 0, all: 0 },
+      bugs: { opened: 0, assigned: 0, all: 0, autojob: 0 },
       tasks: { mine: 0, test: 0, all: 0 }
     },
     reports: store.getReports(),
@@ -662,7 +799,14 @@ function emptySnapshot() {
       projects: [],
       taskProjectIds: [],
       cacheSeconds: config.zentao.cacheSeconds,
-      connection: currentConnection(config.zentao.url || '')
+      connection: currentConnection(config.zentao.url || ''),
+      autojob: {
+        enabled: false,
+        accounts: config.watch.autojobAccounts || [],
+        label: config.watch.label,
+        scannedProducts: 0,
+        scannedAt: null
+      }
     },
     generatedAt: null
   };
@@ -746,9 +890,10 @@ function getSnapshot(options) {
 loadSnapshotCache();
 
 function scopeBugs(data, scope) {
-  const value = ['opened', 'assigned', 'all'].includes(scope) ? scope : 'opened';
+  const value = ['opened', 'assigned', 'all', 'autojob'].includes(scope) ? scope : 'opened';
   if (value === 'all') return data.bugs;
   if (value === 'assigned') return data.bugs.filter((bug) => bug.isAssignedToMe);
+  if (value === 'autojob') return data.autojob && Array.isArray(data.autojob.bugs) ? data.autojob.bugs : [];
   return data.bugs.filter((bug) => bug.isMine);
 }
 
@@ -1146,7 +1291,8 @@ async function handleApi(req, res, url) {
         counts: {
           opened: data.scopeCounts.bugs.opened,
           assigned: data.scopeCounts.bugs.assigned,
-          all: data.scopeCounts.bugs.all
+          all: data.scopeCounts.bugs.all,
+          autojob: data.scopeCounts.bugs.autojob || 0
         }
       }
     });

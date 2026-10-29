@@ -279,8 +279,8 @@ async function listBugs(productId, options) {
   args.push(`--pick=${BUG_FIELDS}`);
   return listPaged(args, {
     ...opts,
-    perPage: 300,
-    maxPages: 20
+    perPage: opts.perPage || 300,
+    maxPages: opts.maxPages || 20
   });
 }
 

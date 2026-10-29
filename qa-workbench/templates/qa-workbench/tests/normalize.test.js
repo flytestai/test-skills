@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 const {
   normalizeTask,
   normalizeBug,
+  autojobRelation,
   buildBugStats,
+  buildAutojobStats,
   buildTaskStats,
   businessCategory,
   severityFromRaw,
@@ -79,6 +81,29 @@ function bug(overrides) {
   });
 }
 
+function autojobBug(overrides) {
+  return normalizeBug(Object.assign({
+    id: 9001,
+    title: 'PC端登录失败[PC]:P0',
+    severity: 1,
+    pri: 1,
+    type: 'codeerror',
+    status: 'active',
+    openedBy: 'autojob',
+    assignedTo: 'qa_user',
+    openedDate: '2026-10-28 01:00:00',
+    steps: '客服群聊记录'
+  }, overrides), {
+    users,
+    account: 'qa_user',
+    productId: '53',
+    productName: '企微客户问题需求',
+    moduleNames: {},
+    webUrl: 'https://chandao.example.com/zentao',
+    autojobAccounts: new Set(['autojob'])
+  });
+}
+
 test('task status and ownership are mapped from ZenTao', () => {
   const row = task();
   assert.equal(row.status, 'todo');
@@ -145,6 +170,59 @@ test('bug status aliases map to the UI model', () => {
   assert.equal(bug({ status: 'resolved' }).status, 'verifying');
   assert.equal(bug({ status: 'closed' }).status, 'closed');
   assert.equal(bug({ status: 'closed' }).isOpen, false);
+});
+
+test('autojob bugs are tagged and related to the current account', () => {
+  const assigned = autojobBug();
+  assert.equal(assigned.isAutojob, true);
+  assert.equal(assigned.sourceLabel, 'AI 客服提取');
+  assert.equal(assigned.reporterAccount, 'autojob');
+  assert.equal(assigned.resolvedByAccount, '');
+  assert.equal(autojobRelation(assigned, 'qa_user'), 'assigned');
+  assert.equal(autojobRelation(assigned, 'dev01'), '');
+
+  const resolved = autojobBug({
+    id: 9002,
+    status: 'resolved',
+    assignedTo: 'autojob',
+    resolvedBy: 'qa_user',
+    resolution: 'fixed'
+  });
+  assert.equal(autojobRelation(resolved, 'qa_user'), 'resolved');
+
+  const closed = autojobBug({
+    id: 9003,
+    status: 'closed',
+    assignedTo: 'closed',
+    closedBy: 'qa_user'
+  });
+  assert.equal(autojobRelation(closed, 'qa_user'), 'closed');
+});
+
+test('autojob stats split unresolved, pending verification and closed', () => {
+  const rows = [
+    autojobBug({ id: 9001, status: 'active', assignedTo: 'qa_user', severity: 1 }),
+    autojobBug({ id: 9002, status: 'active', assignedTo: 'qa_user', severity: 2 }),
+    autojobBug({ id: 9003, status: 'resolved', assignedTo: 'autojob', resolvedBy: 'qa_user', severity: 2 }),
+    autojobBug({ id: 9004, status: 'closed', assignedTo: 'closed', closedBy: 'qa_user', severity: 3 }),
+    autojobBug({ id: 9005, status: 'active', assignedTo: 'dev01', severity: 1 }),
+    autojobBug({ id: 9006, status: 'resolved', assignedTo: 'autojob', resolvedBy: 'dev01', severity: 1 })
+  ];
+  const stats = buildAutojobStats(rows, 'qa_user');
+  assert.equal(stats.total, 4);
+  assert.equal(stats.active, 2);
+  assert.equal(stats.resolved, 1);
+  assert.equal(stats.closed, 1);
+  assert.equal(stats.open, 3);
+  assert.equal(stats.severeOpen, 3);
+  assert.equal(stats.highPriorityOpen, 3);
+  assert.equal(stats.highPriorityActive, 2);
+  assert.equal(stats.assigned, 2);
+  assert.equal(stats.resolvedByMe, 1);
+  assert.equal(stats.closedByMe, 1);
+  assert.equal(stats.allTotal, 6);
+  assert.equal(stats.allClosed, 1);
+  assert.equal(stats.byProduct[0].key, '企微客户问题需求');
 });
 
 test('business category uses title feature prefixes before keywords', () => {

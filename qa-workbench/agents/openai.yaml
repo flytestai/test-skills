@@ -1,6 +1,6 @@
 interface:
   display_name: "QDesk 测试工作台"
-  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报；写操作仅限本人名下 Bug，批量关闭先确认清单"
+  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报，并每日展示 AI 客服指派给我的未解决/已关闭客户反馈；写操作仅限本人名下 Bug，批量关闭先确认清单"
   category: "自定义技能"
   built_in: false
   enabled: true

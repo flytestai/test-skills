@@ -162,6 +162,7 @@
 
   function visibleBugs() {
     if (ui.bugScope === 'assigned') return state.allBugs.filter((bug) => bug.isAssignedToMe);
+    if (ui.bugScope === 'autojob') return state.autojobBugs || [];
     if (ui.bugScope === 'all') return state.allBugs;
     return state.allBugs.filter((bug) => bug.isMine);
   }
@@ -185,6 +186,9 @@
       allTasks: Array.isArray(data.tasks) ? data.tasks : [],
       bugs: Array.isArray(data.bugs) ? data.bugs.filter((bug) => bug.isMine) : [],
       allBugs: Array.isArray(data.bugs) ? data.bugs : [],
+      autojob: data.autojob || null,
+      autojobBugs: data.autojob && Array.isArray(data.autojob.bugs) ? data.autojob.bugs : [],
+      autojobStats: data.autojob && data.autojob.summary ? data.autojob.summary : null,
       bugStats: data.bugStats || null,
       bugScopeStats: data.bugScopeStats || null,
       taskStats: data.taskStats || null,
@@ -217,7 +221,7 @@
     ui.taskScope = ['mine', 'test', 'all'].includes(local.taskScope || preferences.taskScope)
       ? (local.taskScope || preferences.taskScope)
       : 'mine';
-    ui.bugScope = ['opened', 'assigned', 'all'].includes(local.bugScope || preferences.bugScope)
+    ui.bugScope = ['opened', 'assigned', 'autojob', 'all'].includes(local.bugScope || preferences.bugScope)
       ? (local.bugScope || preferences.bugScope)
       : 'opened';
     ui.bugSort = local.bugSort && ['createdAt', 'updatedAt'].includes(local.bugSort.key)
@@ -425,7 +429,10 @@
   }
 
   function bugById(id) {
-    return state.allBugs.find((bug) => bug.id === id) || state.bugs.find((bug) => bug.id === id) || null;
+    return state.allBugs.find((bug) => bug.id === id)
+      || state.bugs.find((bug) => bug.id === id)
+      || (state.autojobBugs || []).find((bug) => bug.id === id)
+      || null;
   }
 
   function projectOptions(selected) {
@@ -592,6 +599,76 @@
      Dashboard
      ========================================================= */
 
+  function autojobOpenBugs() {
+    const order = { P0: 0, P1: 1, P2: 2, P3: 3 };
+    const statusOrder = { active: 0, verifying: 1, confirmed: 2, new: 0, closed: 9 };
+    return (state.autojobBugs || [])
+      .filter((bug) => bug.rawStatus !== 'closed')
+      .slice()
+      .sort((a, b) => {
+        const byStatus = (statusOrder[a.status] == null ? 5 : statusOrder[a.status]) - (statusOrder[b.status] == null ? 5 : statusOrder[b.status]);
+        if (byStatus) return byStatus;
+        const byPriority = (order[a.pri] == null ? 9 : order[a.pri]) - (order[b.pri] == null ? 9 : order[b.pri]);
+        if (byPriority) return byPriority;
+        return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+      });
+  }
+
+  function autojobBanner() {
+    const info = state.autojob;
+    if (!info || !info.enabled) return '';
+    const stats = state.autojobStats || {};
+    const account = (info.accounts && info.accounts[0]) || 'autojob';
+    return `<section class="autojob-banner" aria-label="客服反馈概览">
+      <span class="autojob-mark">${icon('message')}</span>
+      <div class="autojob-copy">
+        <div class="autojob-kicker"><span class="live-dot"></span>客服群聊 · AI 自动提取 · 每日关注</div>
+        <h2>${esc(account)} 指派给我的客户反馈</h2>
+        <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理未解决与 P0/P1，已解决项及时跟进验证。</p>
+      </div>
+      <div class="autojob-numbers">
+        <div><strong>${stats.active || 0}</strong><span>未解决</span></div>
+        <div><strong>${stats.resolved || 0}</strong><span>待验证</span></div>
+        <div><strong>${stats.closed || 0}</strong><span>已关闭</span></div>
+        <div class="${stats.highPriorityOpen ? 'is-warn' : ''}"><strong>${stats.highPriorityOpen || 0}</strong><span>P0/P1 未关闭</span></div>
+      </div>
+      <button class="btn btn-primary autojob-cta" type="button" data-action="open-autojob">查看队列 ${icon('arrow-right')}</button>
+    </section>`;
+  }
+
+  function autojobPanel() {
+    const info = state.autojob;
+    if (!info || !info.enabled) return '';
+    const stats = state.autojobStats || {};
+    const rows = autojobOpenBugs().slice(0, 6);
+    const today = Core.localDate();
+    return `<section class="panel autojob-panel">
+      <div class="panel-head">
+        <div><h2>客服反馈跟进</h2><p>AI 从客服群聊提取，按优先级排列</p></div>
+        <span class="role-badge role-badge-warm">${stats.open || 0} 未关闭</span>
+      </div>
+      <div class="autojob-list">
+        ${rows.length ? rows.map((bug) => `
+          <button class="autojob-row" type="button" data-action="open-bug" data-id="${esc(bug.id)}">
+            <span title="禅道优先级">${severityBadge(bug.pri)}</span>
+            <span class="autojob-row-main">
+              <strong>${esc(bug.title)}</strong>
+              <small>${esc(bug.project)}<span class="sep"></span>${esc(bug.statusLabel)}<span class="sep"></span>${esc(Core.relativeDay(String(bug.createdAt || '').slice(0, 10), today))}</small>
+            </span>
+            <span class="autojob-row-meta">
+              ${bug.autojobRelation === 'assigned' ? '<span class="source-badge">待我处理</span>' : '<span class="source-badge is-soft">待验证</span>'}
+              ${icon('chevron-right')}
+            </span>
+          </button>`).join('') : `
+          <div class="autojob-empty">${icon('check-circle')}<span>当前没有未关闭的客服反馈</span></div>`}
+      </div>
+      <div class="autojob-foot">
+        <span>今日新增 <b>${stats.createdToday || 0}</b> · 近 7 天 <b>${stats.createdLast7Days || 0}</b> · 共 ${stats.total || 0} 条</span>
+        <button class="text-link" type="button" data-action="open-autojob">全部反馈 ${icon('arrow-right')}</button>
+      </div>
+    </section>`;
+  }
+
   function renderDashboard() {
     const m = Core.metrics(state);
     const today = Core.localDate();
@@ -671,6 +748,8 @@
         </div>
       </section>
 
+      ${autojobBanner()}
+
       <section class="kpi-grid" aria-label="工作概览">
         <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-tasks" aria-label="查看待办任务" title="打开任务管理">
           <div class="kpi-top"><span class="kpi-label">待办任务</span><span class="kpi-icon tint-blue">${icon('tasks')}</span></div>
@@ -730,6 +809,8 @@
                 </div>`}
             </div>
           </section>
+
+          ${autojobPanel()}
 
           <section class="panel">
             <div class="panel-head">
@@ -1076,11 +1157,13 @@
   function bugScopeRow() {
     const counts = state.scopeCounts && state.scopeCounts.bugs
       ? state.scopeCounts.bugs
-      : { opened: state.bugs.length, assigned: state.allBugs.filter((bug) => bug.isAssignedToMe).length, all: state.allBugs.length };
+      : { opened: state.bugs.length, assigned: state.allBugs.filter((bug) => bug.isAssignedToMe).length, autojob: (state.autojobBugs || []).length, all: state.allBugs.length };
+    const autojobCount = counts.autojob == null ? (state.autojobBugs || []).length : counts.autojob;
     return `<div class="scope-row">
       <div class="segmented scope-switch" role="group" aria-label="Bug 范围">
         <button type="button" data-action="set-bug-scope" data-scope="opened" class="${ui.bugScope === 'opened' ? 'active' : ''}">${icon('user')}我提交的 <b>${counts.opened}</b></button>
         <button type="button" data-action="set-bug-scope" data-scope="assigned" class="${ui.bugScope === 'assigned' ? 'active' : ''}">${icon('flag')}指派给我 <b>${counts.assigned}</b></button>
+        <button type="button" data-action="set-bug-scope" data-scope="autojob" class="${ui.bugScope === 'autojob' ? 'active' : ''}">${icon('message')}客服反馈 <b>${autojobCount}</b></button>
         <button type="button" data-action="set-bug-scope" data-scope="all" class="${ui.bugScope === 'all' ? 'active' : ''}">${icon('layers')}全部 Bug <b>${counts.all}</b></button>
       </div>
       <span class="scope-note">${icon('database')}${(state.products || []).length} 个产品 · 账号 ${esc(state.zentao ? state.zentao.account : '')} · 按产品归类</span>
@@ -1143,8 +1226,9 @@
             ${bugs.map((bug) => `<tr>
               <td class="table-id">${esc(bug.displayId || '#' + bug.id)}</td>
               <td class="col-title">
+                ${bug.isAutojob ? '<span class="source-badge" title="来自客服群聊记录，由 AI 自动提取">AI客服</span>' : ''}
                 <button class="task-title-btn" type="button" data-action="open-bug" data-id="${esc(bug.id)}">${esc(bug.title)}</button>
-                <span class="cell-sub">${esc(bug.project)}${bug.version ? `<span class="sep"></span>${esc(bug.version)}` : ''}${bug.typeLabel ? `<span class="sep"></span>${esc(bug.typeLabel)}` : ''}${bug.businessCategory ? `<span class="sep"></span>${esc(bug.businessCategory)}` : ''}</span>
+                <span class="cell-sub">${esc(bug.project)}${bug.version ? `<span class="sep"></span>${esc(bug.version)}` : ''}${bug.isAutojob ? `<span class="sep"></span>优先级 ${esc(bug.pri || '—')}` : ''}${bug.typeLabel ? `<span class="sep"></span>${esc(bug.typeLabel)}` : ''}${bug.businessCategory ? `<span class="sep"></span>${esc(bug.businessCategory)}` : ''}</span>
               </td>
               <td class="col-severity">${severityBadge(bug.severity)}</td>
               <td class="col-status">${bugStatusPill(bug.status)}</td>
@@ -1712,8 +1796,8 @@
         <header class="drawer-head">
           <div class="drawer-head-copy">
             <div class="drawer-kicker">${icon('bug')}禅道 Bug ${esc(bug.displayId || '#' + bug.id)} · ${esc(bug.project)}</div>
-            <h2 id="drawer-title">${esc(bug.title)}</h2>
-            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span></p>
+            <h2 id="drawer-title">${bug.isAutojob ? '<span class="source-badge">AI客服</span>' : ''}${esc(bug.title)}</h2>
+            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span>${bug.isAutojob ? ` <span class="role-badge role-badge-warm" style="margin-left:6px">优先级 ${esc(bug.pri)}</span>` : ''}</p>
           </div>
           <button class="icon-btn" type="button" data-action="close-drawer" aria-label="关闭详情">${icon('close')}</button>
         </header>
@@ -1726,6 +1810,7 @@
               <div class="bug-fact"><span>模块</span><strong>${esc(bug.module || '未指定')}</strong></div>
               <div class="bug-fact"><span>负责人</span><strong>${esc(bug.assignee)}</strong></div>
               <div class="bug-fact"><span>报告人</span><strong>${esc(bug.reporter)}</strong></div>
+              ${bug.isAutojob ? `<div class="bug-fact"><span>来源</span><strong>AI客服提取 · 客服群聊</strong></div>` : ''}
               <div class="bug-fact"><span>影响版本</span><strong>${esc(bug.version || '未填写')}</strong></div>
               <div class="bug-fact"><span>Bug 类型</span><strong>${esc(bug.typeLabel)}</strong></div>
               <div class="bug-fact"><span>创建时间</span><strong>${esc(fmtDateTime(bug.createdAt))}</strong></div>
@@ -2468,6 +2553,17 @@
         items.push({ type: 'bug', id: bug.id, title: bug.title, meta: `${bug.severity} · ${Core.BUG_STATUS[bug.status].label}`, color: SEVERITY_COLOR[bug.severity], weight: bug.severity === 'P0' ? 0 : 1 });
       }
     });
+    const autojob = state.autojobStats;
+    if (autojob && autojob.active) {
+      items.push({
+        type: 'autojob',
+        id: '',
+        title: `客服反馈还有 ${autojob.active} 条未解决`,
+        meta: `${autojob.highPriorityOpen ? `${autojob.highPriorityOpen} 条 P0/P1 · ` : ''}AI 从客服群聊提取`,
+        color: '#e95366',
+        weight: 0
+      });
+    }
     if (Core.metrics(state).reportStatus === 'none') {
       items.push({ type: 'report', id: today, title: '今天的日报还没有生成', meta: '花一分钟汇总今天的工作', color: '#11aa99', weight: 3 });
     }
@@ -2481,7 +2577,7 @@
     panel.innerHTML = `<div class="notification-head"><strong>今日提醒</strong><span>${items.length} 条</span></div>
       <div class="notification-list">
         ${items.length ? items.map((item) => `
-          <button class="notification-item" type="button" data-action="${item.type === 'task' ? 'open-task' : item.type === 'bug' ? 'open-bug' : 'report-today'}" data-id="${esc(item.id)}">
+          <button class="notification-item" type="button" data-action="${item.type === 'task' ? 'open-task' : item.type === 'bug' ? 'open-bug' : item.type === 'autojob' ? 'open-autojob' : 'report-today'}" data-id="${esc(item.id)}">
             <span class="dot" style="background:${item.color}"></span>
             <span style="min-width:0;flex:1"><strong>${esc(item.title)}</strong><small>${esc(item.meta)}</small></span>
             ${icon('chevron-right')}
@@ -2772,6 +2868,15 @@
       persistState();
       return;
     }
+    if (action === 'open-autojob') {
+      closeQuickMenu();
+      closeNotifications();
+      ui.bugScope = 'autojob';
+      ui.bugFilters = { q: '', status: 'unclosed', severity: 'all', type: 'all', product: 'all', project: 'all' };
+      navigate('bugs');
+      persistState();
+      return;
+    }
     if (action === 'kpi-due') {
       ui.taskScope = 'mine';
       ui.taskFilters = { q: '', status: 'all', priority: 'all', project: 'all', due: 'today' };
@@ -2808,7 +2913,7 @@
       return;
     }
     if (action === 'set-bug-scope') {
-      ui.bugScope = ['opened', 'assigned', 'all'].includes(actionEl.dataset.scope) ? actionEl.dataset.scope : 'opened';
+      ui.bugScope = ['opened', 'assigned', 'autojob', 'all'].includes(actionEl.dataset.scope) ? actionEl.dataset.scope : 'opened';
       persistState();
       renderView(false);
       return;
@@ -3059,7 +3164,7 @@
       view: syncFromHash(),
       taskView: prefs.taskView === 'list' ? 'list' : 'board',
       taskScope: prefs.taskScope === 'test' ? 'test' : 'mine',
-      bugScope: ['opened', 'assigned', 'all'].includes(prefs.bugScope) ? prefs.bugScope : 'opened',
+      bugScope: ['opened', 'assigned', 'autojob', 'all'].includes(prefs.bugScope) ? prefs.bugScope : 'opened',
       taskFilters: { q: '', status: 'all', priority: 'all', project: 'all', due: 'all' },
       bugFilters: { q: '', status: 'all', severity: 'all', type: 'all', project: 'all' },
       reportDate: prefs.reportDate || Core.localDate(),

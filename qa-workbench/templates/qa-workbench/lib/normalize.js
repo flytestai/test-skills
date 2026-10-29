@@ -283,6 +283,12 @@ function normalizeBug(raw, context) {
   const moduleNames = ctx.moduleNames || {};
   const openedBy = String(bug.openedBy || '');
   const assignedTo = String(bug.assignedTo || '');
+  const resolvedBy = String(bug.resolvedBy || '');
+  const closedBy = String(bug.closedBy || '');
+  const autojobAccounts = ctx.autojobAccounts instanceof Set
+    ? ctx.autojobAccounts
+    : new Set(ctx.autojobAccounts || []);
+  const isAutojob = Boolean(openedBy && autojobAccounts.has(openedBy));
   const feature = extractFeature(bug.title);
   const statusMeta = BUG_STATUS[String(bug.status || 'active')] || BUG_STATUS.active;
   const uiStatus = bugUiStatus(bug);
@@ -332,6 +338,13 @@ function normalizeBug(raw, context) {
     assigneeAccount: assignedTo,
     reporter: realName(users, openedBy),
     reporterAccount: openedBy,
+    resolvedByAccount: resolvedBy,
+    resolvedByName: realName(users, resolvedBy),
+    closedByAccount: closedBy,
+    closedByName: realName(users, closedBy),
+    isAutojob,
+    sourceLabel: isAutojob ? 'AI 客服提取' : '',
+    sourceDetail: isAutojob ? '客服群聊记录自动提取' : '',
     reproducibility: '未确认',
     steps,
     expected: extractSection(steps, '预期结果|期望|预期'),
@@ -405,6 +418,60 @@ function buildBugStats(items) {
   };
 }
 
+function autojobRelation(bug, account) {
+  if (!bug || !account) return '';
+  if (bug.assigneeAccount === account) return 'assigned';
+  if (bug.resolvedByAccount === account) return 'resolved';
+  if (bug.closedByAccount === account) return 'closed';
+  return '';
+}
+
+function buildAutojobStats(items, account) {
+  const all = items || [];
+  const related = all
+    .map((bug) => {
+      const relation = autojobRelation(bug, account);
+      return relation ? { ...bug, autojobRelation: relation } : null;
+    })
+    .filter(Boolean);
+  const active = related.filter((bug) => bug.rawStatus === 'active');
+  const resolved = related.filter((bug) => bug.rawStatus === 'resolved');
+  const closed = related.filter((bug) => bug.rawStatus === 'closed');
+  const open = related.filter((bug) => bug.rawStatus !== 'closed');
+  const today = localDate();
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  const sevenDayKey = localDate(sevenDaysAgo.toISOString());
+  const severe = open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1');
+  const highPriority = open.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1');
+  return {
+    total: related.length,
+    open: open.length,
+    active: active.length,
+    resolved: resolved.length,
+    closed: closed.length,
+    severeOpen: severe.length,
+    highPriorityOpen: highPriority.length,
+    highPriorityActive: active.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1').length,
+    p0Open: open.filter((bug) => bug.severity === 'P0').length,
+    p1Open: open.filter((bug) => bug.severity === 'P1').length,
+    createdToday: related.filter((bug) => localDate(bug.createdAt) === today).length,
+    createdLast7Days: related.filter((bug) => localDate(bug.createdAt) >= sevenDayKey).length,
+    assigned: related.filter((bug) => bug.autojobRelation === 'assigned').length,
+    resolvedByMe: related.filter((bug) => bug.autojobRelation === 'resolved').length,
+    closedByMe: related.filter((bug) => bug.autojobRelation === 'closed').length,
+    allTotal: all.length,
+    allOpen: all.filter((bug) => bug.rawStatus !== 'closed').length,
+    allClosed: all.filter((bug) => bug.rawStatus === 'closed').length,
+    byProduct: groupCount(related, (bug) => bug.project || bug.productId || '未分类', (bug) => bug.project || '未分类'),
+    byRelation: groupCount(related, (bug) => bug.autojobRelation, (bug) => ({
+      assigned: '指派给我',
+      resolved: '我已解决',
+      closed: '我已关闭'
+    }[bug.autojobRelation] || bug.autojobRelation))
+  };
+}
+
 function buildTaskStats(items) {
   const tasks = items || [];
   return {
@@ -438,6 +505,8 @@ module.exports = {
   moduleLabel,
   normalizeTask,
   normalizeBug,
+  autojobRelation,
   buildBugStats,
+  buildAutojobStats,
   buildTaskStats
 };
