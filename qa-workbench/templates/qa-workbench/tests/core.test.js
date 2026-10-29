@@ -122,6 +122,22 @@ test('筛选器支持关键词、优先级、项目和逾期条件', () => {
   assert.ok(unclosed.length < state.bugs.length);
 });
 
+test('filterBugs 支持按发版版本与待验证/未关闭口径筛选', () => {
+  const bugs = [
+    { id: 'B-1', version: 'PC2.9.0版本', status: 'verifying', isMine: true, needsMyVerification: true },
+    { id: 'B-2', version: '2.9.0', status: 'active', isMine: true, needsMyVerification: false },
+    { id: 'B-3', version: '2.8.0', status: 'active', isMine: true, needsMyVerification: false },
+    { id: 'B-4', version: '2.9.0', status: 'active', isMine: false, needsMyVerification: false },
+    { id: 'B-5', version: '2.9.0', status: 'closed', isMine: true, needsMyVerification: false }
+  ];
+  const pending = Core.filterBugs(bugs, { version: '2.9.0', releaseKind: 'pending' });
+  assert.deepEqual(pending.map((bug) => bug.id), ['B-1']);
+  const open = Core.filterBugs(bugs, { version: '2.9.0', releaseKind: 'open' });
+  assert.deepEqual(open.map((bug) => bug.id), ['B-2']);
+  const other = Core.filterBugs(bugs, { version: '2.8.0' });
+  assert.deepEqual(other.map((bug) => bug.id), ['B-3']);
+});
+
 test('weekSeries 覆盖连续七天并返回可绘制数据', () => {
   const state = fixedState();
   const week = Core.weekSeries(state, FIXED_DATE);

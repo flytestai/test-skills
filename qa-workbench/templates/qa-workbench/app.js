@@ -550,12 +550,17 @@
           title: '测试任务',
           subtitle: `${state.allTasks.length} 项任务 · ${(state.projectList || []).length} 个项目 · 按项目自动归类`
         };
-      case 'bugs':
+      case 'bugs': {
+        const versionFilter = ui && ui.bugFilters && ui.bugFilters.version;
+        const kindFilter = ui && ui.bugFilters && ui.bugFilters.releaseKind;
         return {
           eyebrow: 'QUALITY / BUG TRACKER',
           title: 'Bug 跟踪',
-          subtitle: `${state.allBugs.length} 个账号相关 Bug · ${(state.products || []).length} 个产品 · 按更新时间排序`
+          subtitle: versionFilter
+            ? `版本 ${versionFilter} · ${kindFilter === 'open' ? '未关闭 Bug' : '待验证 Bug'} · 来自发版管理`
+            : `${state.allBugs.length} 个账号相关 Bug · ${(state.products || []).length} 个产品 · 按更新时间排序`
         };
+      }
       case 'reports':
         return {
           eyebrow: 'WORKSPACE / DAILY LOG',
@@ -1098,8 +1103,12 @@
           </div>
           <div class="release-stats">
             <div class="release-stat"><strong>${item.taskDone}<small>/${item.taskTotal}</small></strong><span>任务完成</span></div>
-            <div class="release-stat"><strong>${item.pendingBugs}</strong><span>待验证 Bug</span></div>
-            <div class="release-stat"><strong>${item.openBugs}</strong><span>未关闭 Bug</span></div>
+            <button class="release-stat is-link" type="button" data-action="open-release-bugs" data-key="${esc(item.key)}" data-kind="pending" title="查看版本 ${esc(item.name)} 的待验证 Bug">
+              <strong>${item.pendingBugs}</strong><span>待验证 Bug ${icon('arrow-up-right')}</span>
+            </button>
+            <button class="release-stat is-link" type="button" data-action="open-release-bugs" data-key="${esc(item.key)}" data-kind="open" title="查看版本 ${esc(item.name)} 的未关闭 Bug">
+              <strong>${item.openBugs}</strong><span>未关闭 Bug ${icon('arrow-up-right')}</span>
+            </button>
             <div class="release-stat"><strong>${item.taskProgress}<small>%</small></strong><span>任务进度</span></div>
           </div>
           <div class="release-progress" role="img" aria-label="任务完成度 ${item.taskProgress}%">
@@ -1524,7 +1533,7 @@
 
   function hasActiveBugFilters() {
     const f = ui.bugFilters;
-    return Boolean(f.q || (f.status && f.status !== 'all') || (f.severity && f.severity !== 'all') || (f.type && f.type !== 'all') || (f.product && f.product !== 'all') || (f.project && f.project !== 'all'));
+    return Boolean(f.q || (f.status && f.status !== 'all') || (f.severity && f.severity !== 'all') || (f.type && f.type !== 'all') || (f.product && f.product !== 'all') || (f.project && f.project !== 'all') || f.version || f.releaseKind);
   }
 
   function bugCountLabel() {
@@ -1593,6 +1602,12 @@
         <button class="btn btn-primary" type="button" data-action="create-bug">${icon('plus')}登记 Bug</button>
       </div>
       ${bugClassificationPanel()}
+      ${f.version ? `<div class="release-bug-filter">
+        <span class="release-bug-filter-label">${icon('layers')}版本 ${esc(f.version)}</span>
+        <span>${f.releaseKind === 'open' ? '未关闭 Bug' : '待验证 Bug'}</span>
+        <span class="release-bug-filter-count">${filteredBugs().length} 个</span>
+        <button class="release-bug-filter-clear" type="button" data-action="clear-release-bug-filter" aria-label="清除版本筛选">${icon('close')}清除版本筛选</button>
+      </div>` : ''}
       <div class="result-meta" id="bug-result-count">${bugCountLabel()}</div>
       <div id="bug-results">${bugResultsHtml()}</div>`;
   }
@@ -3748,6 +3763,33 @@
       saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl);
       return;
     }
+    if (action === 'open-release-bugs') {
+      const key = actionEl.dataset.key;
+      const kind = actionEl.dataset.kind === 'open' ? 'open' : 'pending';
+      if (!key) return;
+      closeQuickMenu();
+      closeNotifications();
+      ui.bugScope = 'all';
+      ui.bugFilters = {
+        q: '',
+        status: kind === 'open' ? 'unclosed' : 'all',
+        severity: 'all',
+        type: 'all',
+        product: 'all',
+        project: 'all',
+        version: key,
+        releaseKind: kind
+      };
+      persistState();
+      navigate('bugs');
+      return;
+    }
+    if (action === 'clear-release-bug-filter') {
+      delete ui.bugFilters.version;
+      delete ui.bugFilters.releaseKind;
+      renderView(false);
+      return;
+    }
     if (action === 'toggle-release-closed') {
       const card = actionEl.closest('.release-card');
       const key = actionEl.dataset.key || (card ? card.dataset.releaseKey : '');
@@ -3781,6 +3823,8 @@
     }
     if (action === 'set-bug-scope') {
       ui.bugScope = ['opened', 'assigned', 'autojob', 'all'].includes(actionEl.dataset.scope) ? actionEl.dataset.scope : 'opened';
+      delete ui.bugFilters.version;
+      delete ui.bugFilters.releaseKind;
       persistState();
       renderView(false);
       return;

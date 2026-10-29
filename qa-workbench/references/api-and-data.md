@@ -215,6 +215,8 @@ The dashboard `当日进度` ring is computed client-side by `Core.dailyFocus(st
 
 The ring percentage counts only pending-verification Bugs and my unfinished tasks. Version readiness (completed tasks ÷ all tasks in that version) is shown in its own row for reference and is not included in the percentage. The three category rows show Bug verification, version readiness, and task completion separately.
 
+On the 发版管理 page, the `待验证 Bug` and `未关闭 Bug` counters are buttons that open `#/bugs` with `ui.bugFilters.version` set to the release key and `ui.bugFilters.releaseKind` set to `pending` or `open`. `Core.filterBugs` applies the same predicates as `Core.releaseCatalog` (`needsMyVerification` for pending; `isMine && status !== 'closed'` excluding pending for open), so the destination list count matches the card counter. The Bug page shows a removable version-filter banner; switching Bug scope clears the release filter.
+
 The dashboard reads version test windows from `releasePlans` via `Core.releaseCatalog`. Version names in the hero append `（测试中）` for versions whose window contains the current time, and the version tooltip lists the configured start/end time. Editing a window on the 发版管理 page updates the dashboard immediately after the API response; no ZenTao sync is needed.
 
 The fourth dashboard KPI card is `今日待验证`. It lists every pending-verification Bug regardless of creation date, sorted by priority, inside a scrollable area. Each row is a `data-action="open-bug"` button that opens that Bug's detail page directly. A card click does not open a separate list page.
