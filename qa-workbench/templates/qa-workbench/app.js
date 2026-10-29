@@ -802,7 +802,7 @@
                 <span class="focus-breakdown-value">${dailyFocus.tasks.doneToday}/${dailyFocus.tasks.total}</span>
               </div>
             </div>
-            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}${dailyFocus.versions.pending ? ' 版本就绪度仅供参考，不计入综合进度。' : ''}</span>
+            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}</span>
             <div class="mini-line"><i style="width:${dailyFocus.progress}%"></i></div>
           </div>
         </div>
