@@ -9223,3 +9223,21 @@ kbd {
     font-size: 11px;
   }
 }
+
+/* Compact dashboard hero */
+.hero {
+  min-height: 0;
+  padding: 20px 32px;
+}
+
+@media (max-width: 820px) {
+  .hero {
+    padding: 20px 24px;
+  }
+}
+
+@media (max-width: 620px) {
+  .hero {
+    padding: 18px 18px;
+  }
+}
