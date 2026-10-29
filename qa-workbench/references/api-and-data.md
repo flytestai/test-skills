@@ -27,8 +27,8 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | POST | `/api/bugs/:id/confirm` | Confirm the Bug (ZenTao 22.5+ only) |
 | POST | `/api/bugs/:id/delete` | Delete the Bug through the CLI (`--yes`) |
 | GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats |
-| GET | `/api/releases` | Release catalog merged with local test windows, plus saved `releasePlans` |
-| POST | `/api/releases` | Set or clear one version's test start/end time; does not write to ZenTao |
+| GET | `/api/releases` | Release catalog merged with local test windows, pinning and priorities, plus saved `releasePlans` |
+| POST | `/api/releases` | Set or clear one version's test start/end time, pin flag or P1–P3 priority; does not write to ZenTao |
 | GET | `/api/reports` | Stored daily reports |
 | POST | `/api/reports` | Create or update one report |
 | POST | `/api/settings` | Update display profile and UI preferences |
@@ -50,25 +50,28 @@ Action payloads:
 
 All action responses contain `{ ok: true, data: { id, action, message, incremental, refreshRequired } }`. After a successful write the server calls `zentao bug <id>` for that one Bug, re-normalizes it, updates the in-memory snapshot, recalculates Bug/autojob statistics, increments `revision` and writes the snapshot cache. `incremental: true` and `refreshRequired: false` mean the next `/api/bootstrap` already has the new state; a full sync is started only when the single-Bug read fails. ZenTao 22.4 does not support `bug confirm`, and its `bug update` CLI does not accept product or module changes.
 
-## Release test windows
+## Release test windows, pinning and priority
 
-Release records are derived from synchronized ZenTao data; no build or release write API is required. A version key is the first numeric version found in `task.execution` or `bug.version` (for example `PC2.9.0版本` → `2.9.0`); `主干` / `trunk` values are ignored. Tasks and account-related Bugs are grouped by that key, and `Core.releaseCatalog(tasks, bugs, releasePlans)` returns task progress, pending verification Bugs, open Bugs and the current test-window status (`testing`, `upcoming`, `ended`, `unplanned`).
+Release records are derived from synchronized ZenTao data; no build or release write API is required. A version key is the first numeric version found in `task.execution` or `bug.version` (for example `PC2.9.0版本` → `2.9.0`); `主干` / `trunk` values are ignored. Tasks and account-related Bugs are grouped by that key, and `Core.releaseCatalog(tasks, bugs, releasePlans)` returns task progress, pending verification Bugs, open Bugs, the current test-window status (`testing`, `upcoming`, `ended`, `unplanned`), `pinned` and `priority`.
 
 `POST /api/releases` payload:
 
 ```json
-{ "key": "2.9.0", "testStart": "2026-10-01T09:00", "testEnd": "2026-10-31T18:00", "closed": false }
+{ "key": "2.9.0", "testStart": "2026-10-01T09:00", "testEnd": "2026-10-31T18:00", "closed": false, "pinned": true, "priority": "P2" }
 ```
 
 - `key`: required, letters, digits, dot, underscore or hyphen, maximum 64 characters.
 - `testStart` / `testEnd`: optional local `YYYY-MM-DDTHH:mm` values; send both as empty strings to clear the window.
 - `closed`: optional local close flag. Closing a release does not write to ZenTao and does not require a test window.
+- `pinned`: optional local pin flag. Pinned releases sort above all non-pinned releases.
+- `priority`: optional `P1`, `P2` or `P3`; any other value returns HTTP 400. Among pinned or non-pinned releases, order is P1 → P2 → P3 → unset.
+- Every field is merged with the stored plan, so a request may update only one field.
 - `testEnd` must not be earlier than `testStart`.
-- A plan is deleted only when both times are empty and `closed` is false.
-- Test windows and close flags are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
+- A plan is deleted only when both times are empty and `closed` is false, `pinned` is false and `priority` is empty.
+- Test windows, pinning, priorities and close flags are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
 - The response returns `{ plan, releases, releasePlans, revision }`. Clients can merge `releasePlans` locally without a full snapshot reload.
 
-The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd` and `releaseStatus`, so dashboard version labels and tooltips stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions do not add a new queue item, and locally `closed` versions are removed from the dashboard queue entirely. The dashboard `发版：…` line only includes versions whose `testStart` or `testEnd` is set.
+The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions do not add a new queue item, and locally `closed` versions are removed from the dashboard queue entirely. The dashboard `发版：…` line only includes versions whose `testStart` or `testEnd` is set.
 
 ## Health example
 
@@ -144,6 +147,8 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
       "name": "2.9.0",
       "testStart": "2026-10-01T09:00",
       "testEnd": "2026-10-31T18:00",
+      "pinned": true,
+      "priority": "P2",
       "updatedAt": "..."
     }
   },
@@ -160,6 +165,8 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
       "openBugs": 5,
       "testStart": "2026-10-01T09:00",
       "testEnd": "2026-10-31T18:00",
+      "pinned": true,
+      "priority": "P2",
       "status": "testing"
     }
   ],
@@ -231,7 +238,7 @@ Task scope semantics:
 
 | File | Contents | Sensitive |
 | --- | --- | --- |
-| `data/app-data.json` | reports, release test windows, display profile, UI preferences | moderate |
+| `data/app-data.json` | reports, release test windows / pinning / priorities, display profile, UI preferences | moderate |
 | `data/zentao-auth.json` | URL, account, plaintext local password, display name, version 2 schema | **yes** |
 | `data/snapshot-cache.json` | full last successful snapshot, including tasks and Bugs | **yes** |
 | `data/qdesk-autostart.log` | autostart stdout/stderr | low |

@@ -32,6 +32,8 @@
     P3: { label: 'P3 轻微', short: 'P3', order: 4 }
   };
 
+  const RELEASE_PRIORITIES = ['P1', 'P2', 'P3'];
+  const RELEASE_PRIORITY_ORDER = { P1: 0, P2: 1, P3: 2 };
   const TASK_TYPES = ['功能测试', '回归测试', '接口测试', '自动化测试', '性能测试', '需求评审', '环境维护', '其他'];
   const REPRO = ['必现', '偶现', '无法复现', '未确认'];
 
@@ -716,6 +718,8 @@
       const testStart = typeof plan.testStart === 'string' ? plan.testStart : '';
       const testEnd = typeof plan.testEnd === 'string' ? plan.testEnd : '';
       const closed = plan.closed === true;
+      const pinned = plan.pinned === true;
+      const priority = RELEASE_PRIORITIES.includes(plan.priority) ? plan.priority : '';
       const startMs = testStart ? new Date(testStart).getTime() : 0;
       const endMs = testEnd ? new Date(testEnd).getTime() : 0;
       let status = 'unplanned';
@@ -743,6 +747,8 @@
         testStart,
         testEnd,
         closed,
+        pinned,
+        priority,
         status,
         planUpdatedAt: plan.updatedAt || ''
       });
@@ -756,11 +762,15 @@
       || item.pendingBugs
       || item.openBugs
       || item.myTaskOpen
+      || item.pinned
+      || item.priority
       || (item.latestEnd && item.latestEnd >= cutoff)
     ));
     const rank = { testing: 0, upcoming: 1, unplanned: 2, ended: 3, closed: 4 };
     visible.sort((a, b) => (
-      (rank[a.status] || 0) - (rank[b.status] || 0)
+      Number(b.pinned) - Number(a.pinned)
+      || (RELEASE_PRIORITY_ORDER[a.priority] ?? 9) - (RELEASE_PRIORITY_ORDER[b.priority] ?? 9)
+      || (rank[a.status] || 0) - (rank[b.status] || 0)
       || String(a.testStart || '9999').localeCompare(String(b.testStart || '9999'))
       || String(b.latestEnd || '').localeCompare(String(a.latestEnd || ''))
       || a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
@@ -872,11 +882,15 @@
         progress: versionProgress(doneUnits, totalUnits),
         testStart: release ? release.testStart : '',
         testEnd: release ? release.testEnd : '',
-        releaseStatus: release ? release.status : 'unplanned'
+        releaseStatus: release ? release.status : 'unplanned',
+        pinned: release ? release.pinned === true : false,
+        priority: release && RELEASE_PRIORITIES.includes(release.priority) ? release.priority : ''
       });
     });
     versionItems.sort((a, b) => (
-      b.pendingBugs - a.pendingBugs
+      Number(b.pinned) - Number(a.pinned)
+      || (RELEASE_PRIORITY_ORDER[a.priority] ?? 9) - (RELEASE_PRIORITY_ORDER[b.priority] ?? 9)
+      || b.pendingBugs - a.pendingBugs
       || b.pending - a.pending
       || a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
     ));

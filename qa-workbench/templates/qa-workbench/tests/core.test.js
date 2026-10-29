@@ -328,6 +328,28 @@ test('releaseCatalog 从执行与 Bug 版本汇总版本，并合并本地测试
   assert.equal(closed[0].pendingBugs, 1);
 });
 
+test('releaseCatalog 置顶优先，其次按 P1、P2、P3 排序', () => {
+  const state = {
+    bugs: [
+      { id: 'B-1', version: '1.0.0', project: 'PC 客户端', status: 'active', needsMyVerification: true },
+      { id: 'B-2', version: '2.0.0', project: 'PC 客户端', status: 'active', needsMyVerification: true },
+      { id: 'B-3', version: '3.0.0', project: 'PC 客户端', status: 'active', needsMyVerification: true },
+      { id: 'B-4', version: '4.0.0', project: 'PC 客户端', status: 'active', needsMyVerification: true }
+    ]
+  };
+  const plans = {
+    '1.0.0': { key: '1.0.0', name: '1.0.0' },
+    '2.0.0': { key: '2.0.0', name: '2.0.0', priority: 'P1' },
+    '3.0.0': { key: '3.0.0', name: '3.0.0', pinned: true, priority: 'P3' },
+    '4.0.0': { key: '4.0.0', name: '4.0.0', pinned: true, priority: 'P1' }
+  };
+  const releases = Core.releaseCatalog(state, plans);
+  assert.deepEqual(releases.map((item) => item.key), ['4.0.0', '3.0.0', '2.0.0', '1.0.0']);
+  assert.equal(releases[0].pinned, true);
+  assert.equal(releases[0].priority, 'P1');
+  assert.equal(releases[3].priority, '');
+});
+
 test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
   const state = fixedState();
   state.tester = { account: 'weizhen', name: '魏振' };

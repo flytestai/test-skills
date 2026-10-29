@@ -1044,27 +1044,20 @@
     return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) ? raw.slice(0, 16) : '';
   }
 
-  async function saveRelease(key, testStart, testEnd, button, closed) {
+  async function saveRelease(key, patch, button, message) {
     if (!key) return;
     if (button) {
       button.disabled = true;
       button.dataset.busy = '1';
     }
     try {
-      const payload = { key, testStart, testEnd };
-      if (typeof closed === 'boolean') payload.closed = closed;
       const data = await apiRequest('/api/releases', {
         method: 'POST',
-        body: payload
+        body: Object.assign({ key }, patch || {})
       });
       state.releasePlans = data.releasePlans && typeof data.releasePlans === 'object' ? data.releasePlans : state.releasePlans;
       if (data.releases) state.releases = data.releases;
-      const message = closed === true
-        ? '已关闭该发版，工作台不再展示。'
-        : closed === false
-          ? '已重新开启该发版。'
-          : '发版测试时间已保存。';
-      showToast(message);
+      showToast(message || '发版信息已保存。');
       renderView(false);
     } catch (error) {
       showToast(error.message, 'error');
@@ -1089,17 +1082,29 @@
       const executions = (item.executions || []).filter(Boolean);
       const projectText = projects.length ? projects.join(' / ') : '未归属项目';
       const executionText = executions.length ? executions.join(' / ') : '';
-      return `<article class="release-card ${meta.className}" data-release-key="${esc(item.key)}">
+      const priorityOptions = ['P1', 'P2', 'P3'].map((priority) => (
+        `<option value="${priority}"${item.priority === priority ? ' selected' : ''}>${priority}</option>`
+      )).join('');
+      return `<article class="release-card ${meta.className}${item.pinned ? ' is-pinned' : ''}" data-release-key="${esc(item.key)}">
         <div class="release-card-main">
           <div class="release-card-head">
             <div class="release-card-title">
-              <span class="release-icon">${icon('layers')}</span>
+              <span class="release-icon">${icon(item.pinned ? 'flag' : 'layers')}</span>
               <div>
-                <h3>${esc(item.name)}</h3>
+                <h3>${esc(item.name)}${item.pinned ? '<span class="release-pinned-tag">置顶</span>' : ''}</h3>
                 <p>${esc(projectText)}${executionText ? `<span class="sep"></span>${esc(executionText)}` : ''}</p>
               </div>
             </div>
-            <span class="release-badge ${meta.className}">${meta.label}</span>
+            <div class="release-card-tools">
+              <select class="release-priority${item.priority ? ` is-${item.priority.toLowerCase()}` : ''}" data-release-priority data-key="${esc(item.key)}" aria-label="${esc(item.name)} 发版优先级" title="设置发版优先级">
+                <option value=""${item.priority ? '' : ' selected'}>优先级</option>
+                ${priorityOptions}
+              </select>
+              <button class="release-pin${item.pinned ? ' is-active' : ''}" type="button" data-action="toggle-release-pin" data-key="${esc(item.key)}" data-pinned="${item.pinned ? '1' : '0'}" aria-pressed="${item.pinned ? 'true' : 'false'}" title="${item.pinned ? '取消置顶' : '置顶该版本'}">
+                ${icon('flag')}<span>${item.pinned ? '已置顶' : '置顶'}</span>
+              </button>
+              <span class="release-badge ${meta.className}">${meta.label}</span>
+            </div>
           </div>
           <div class="release-stats">
             <div class="release-stat"><strong>${item.taskDone}<small>/${item.taskTotal}</small></strong><span>任务完成</span></div>
@@ -1156,7 +1161,7 @@
         <div class="release-hero-copy">
           <span class="release-eyebrow">${icon('layers')} RELEASE / TEST WINDOW</span>
           <h2>发版管理</h2>
-          <p>版本来自禅道同步的执行与 Bug 版本字段。只有设置了测试时间的版本会出现在工作台发版列表；测试时间与关闭状态均为本机独立记录。</p>
+          <p>版本来自禅道同步的执行与 Bug 版本字段。可置顶版本并按 P1 → P2 → P3 设置优先级；只有设置了测试时间的版本会出现在工作台发版列表。测试时间、关闭状态与排序均为本机独立记录。</p>
         </div>
         <div class="release-hero-stats">
           <div><strong>${releases.length}</strong><span>版本</span></div>
@@ -1172,7 +1177,7 @@
 
       <div class="release-toolbar">
         <span>${icon('calendar')}共 ${releases.length} 个版本，${planned} 个已设置测试时间，${closed} 个已关闭</span>
-        <span class="release-toolbar-note">测试时间与关闭状态仅保存在 QDesk 本机，不回写禅道</span>
+        <span class="release-toolbar-note">置顶、优先级、测试时间与关闭状态仅保存在 QDesk 本机，不回写禅道</span>
       </div>
 
       <div class="release-list">
@@ -3760,7 +3765,16 @@
       const key = actionEl.dataset.key || (card ? card.dataset.releaseKey : '');
       const startInput = card ? card.querySelector('[data-release-field="testStart"]') : null;
       const endInput = card ? card.querySelector('[data-release-field="testEnd"]') : null;
-      saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl);
+      saveRelease(key, {
+        testStart: startInput ? startInput.value : '',
+        testEnd: endInput ? endInput.value : ''
+      }, actionEl, '发版测试时间已保存。');
+      return;
+    }
+    if (action === 'toggle-release-pin') {
+      const key = actionEl.dataset.key;
+      const pinned = actionEl.dataset.pinned !== '1';
+      saveRelease(key, { pinned }, actionEl, pinned ? '已置顶该发版。' : '已取消置顶。');
       return;
     }
     if (action === 'open-release-bugs') {
@@ -3796,7 +3810,11 @@
       const startInput = card ? card.querySelector('[data-release-field="testStart"]') : null;
       const endInput = card ? card.querySelector('[data-release-field="testEnd"]') : null;
       const closed = actionEl.dataset.closed === '1';
-      saveRelease(key, startInput ? startInput.value : '', endInput ? endInput.value : '', actionEl, closed);
+      saveRelease(key, {
+        testStart: startInput ? startInput.value : '',
+        testEnd: endInput ? endInput.value : '',
+        closed
+      }, actionEl, closed ? '已关闭该发版，工作台不再展示。' : '已重新开启该发版。');
       return;
     }
     if (action === 'set-task-scope') {
@@ -3896,6 +3914,11 @@
     }
     if (target.matches('[data-role="bug-status"]')) {
       changeBugStatus(target.dataset.id, target.value);
+      return;
+    }
+    if (target.matches('[data-release-priority]')) {
+      const priority = ['P1', 'P2', 'P3'].includes(target.value) ? target.value : '';
+      saveRelease(target.dataset.key, { priority }, null, priority ? `发版优先级已设为 ${priority}。` : '已清除发版优先级。');
       return;
     }
     if (target.matches('[data-role="report-date"]')) {

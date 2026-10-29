@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const REPORT_FIELDS = ['summary', 'done', 'bugs', 'ongoing', 'next', 'risks'];
+const RELEASE_PRIORITIES = ['P1', 'P2', 'P3'];
 const VIEWS = new Set(['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings']);
 const TASK_SCOPES = new Set(['mine', 'test']);
 const BUG_SCOPES = new Set(['opened', 'assigned', 'all']);
@@ -51,12 +52,22 @@ function normalizeReleasePlan(raw, existing) {
   }
   const closedInput = input.closed != null ? input.closed : base.closed;
   const closed = closedInput === true || closedInput === 1 || closedInput === '1' || closedInput === 'true';
+  const pinnedInput = input.pinned != null ? input.pinned : base.pinned;
+  const pinned = pinnedInput === true || pinnedInput === 1 || pinnedInput === '1' || pinnedInput === 'true';
+  const priorityInput = String(input.priority != null ? input.priority : base.priority || '').trim().toUpperCase();
+  if (priorityInput && !RELEASE_PRIORITIES.includes(priorityInput)) {
+    const error = new Error('发版优先级无效，请选择 P1、P2 或 P3。');
+    error.status = 400;
+    throw error;
+  }
   return {
     key,
     name: text(input.name != null ? input.name : base.name || key, 120).trim() || key,
     testStart,
     testEnd,
     closed,
+    pinned,
+    priority: priorityInput,
     updatedAt: new Date().toISOString()
   };
 }
@@ -236,7 +247,7 @@ class Store {
     const key = normalizeReleaseKey(input.key);
     const existing = this.data.releasePlans[key] || null;
     const plan = normalizeReleasePlan(input, existing);
-    if (!plan.testStart && !plan.testEnd && !plan.closed) {
+    if (!plan.testStart && !plan.testEnd && !plan.closed && !plan.pinned && !plan.priority) {
       delete this.data.releasePlans[key];
       this.save();
       return Object.assign({}, plan, { removed: true });
@@ -279,6 +290,7 @@ module.exports = {
   normalizeSettings,
   normalizeReleasePlan,
   normalizeReleasePlans,
+  RELEASE_PRIORITIES,
   REPORT_FIELDS,
   VIEWS
 };

@@ -254,14 +254,20 @@ test('Store persists release test windows and rejects invalid ranges', () => {
       key: '9.9.0',
       name: 'PC 9.9.0',
       testStart: '2026-10-01T09:00',
-      testEnd: '2026-10-03T18:00'
+      testEnd: '2026-10-03T18:00',
+      pinned: true,
+      priority: 'P2'
     });
     assert.equal(saved.key, '9.9.0');
     assert.equal(saved.testStart, '2026-10-01T09:00');
     assert.equal(saved.testEnd, '2026-10-03T18:00');
+    assert.equal(saved.pinned, true);
+    assert.equal(saved.priority, 'P2');
 
     const reloaded = new Store(file);
     assert.equal(reloaded.getReleasePlans()['9.9.0'].testEnd, '2026-10-03T18:00');
+    assert.equal(reloaded.getReleasePlans()['9.9.0'].pinned, true);
+    assert.equal(reloaded.getReleasePlans()['9.9.0'].priority, 'P2');
     assert.equal(reloaded.snapshot().releasePlans['9.9.0'].name, 'PC 9.9.0');
 
     assert.throws(
@@ -269,6 +275,7 @@ test('Store persists release test windows and rejects invalid ranges', () => {
       /测试结束时间不能早于开始时间/
     );
     assert.throws(() => store.updateReleasePlan({ key: 'bad key!' }), /版本标识无效/);
+    assert.throws(() => store.updateReleasePlan({ key: '9.9.0', priority: 'P9' }), /发版优先级无效/);
 
     const closed = store.updateReleasePlan({ key: '9.9.0', closed: true });
     assert.equal(closed.closed, true);
@@ -283,7 +290,18 @@ test('Store persists release test windows and rejects invalid ranges', () => {
     store.updateReleasePlan({ key: '7.7.0', closed: false });
     assert.equal(store.getReleasePlans()['7.7.0'], undefined);
 
-    store.updateReleasePlan({ key: '9.9.0', testStart: '', testEnd: '', closed: false });
+    const priorityOnly = store.updateReleasePlan({ key: '6.6.0', priority: 'P1' });
+    assert.equal(priorityOnly.priority, 'P1');
+    assert.ok(new Store(file).getReleasePlans()['6.6.0']);
+    store.updateReleasePlan({ key: '6.6.0', priority: '' });
+    assert.equal(store.getReleasePlans()['6.6.0'], undefined);
+
+    store.updateReleasePlan({ key: '5.5.0', pinned: true });
+    assert.equal(new Store(file).getReleasePlans()['5.5.0'].pinned, true);
+    store.updateReleasePlan({ key: '5.5.0', pinned: false });
+    assert.equal(store.getReleasePlans()['5.5.0'], undefined);
+
+    store.updateReleasePlan({ key: '9.9.0', testStart: '', testEnd: '', closed: false, pinned: false, priority: '' });
     assert.equal(store.getReleasePlans()['9.9.0'], undefined);
     assert.equal(new Store(file).getReleasePlans()['9.9.0'], undefined);
   });
