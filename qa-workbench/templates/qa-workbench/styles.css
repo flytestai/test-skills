@@ -461,6 +461,10 @@ svg {
   min-width: 0;
 }
 
+.topbar-heading[hidden] {
+  display: none;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted);

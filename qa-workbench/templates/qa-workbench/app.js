@@ -591,6 +591,8 @@
     $('#page-eyebrow').textContent = meta.eyebrow;
     $('#page-title').textContent = meta.title;
     $('#page-subtitle').textContent = meta.subtitle;
+    const heading = $('.topbar-heading');
+    if (heading) heading.hidden = ui.view === 'dashboard';
     $$('.nav-item[data-view]').forEach((item) => {
       item.classList.toggle('active', item.dataset.view === ui.view);
     });
