@@ -74,7 +74,7 @@ Release records are derived from synchronized ZenTao data; no build or release w
 - Test windows, pinning, priorities and close flags are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
 - The response returns `{ plan, releases, releasePlans, revision }`. Clients can merge `releasePlans` locally without a full snapshot reload.
 
-The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. A configured `testing` or `upcoming` version is counted as awaiting release even when it has no remaining tasks or Bugs; `ended` versions do not add a new queue item, and locally `closed` versions are removed from the dashboard queue entirely. The dashboard `发版：…` line only includes versions whose `testStart` or `testEnd` is set.
+The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. `focus.versions.pending` counts only version items whose `testStart` or `testEnd` is non-empty; unplanned versions still appear in `items` for version readiness but are not counted as awaiting release. Locally `closed` versions are removed from the queue entirely. The dashboard `发版：…` line uses the same scheduled-only filter and follows the same pin/priority order.
 
 ## Local tasks
 

@@ -104,7 +104,7 @@ Start from `config.example.json`. The installer creates this file automatically.
 - A plan is removed only when both times are empty and `closed`, `pinned` and `priority` are all empty/false.
 - Test windows, pinning, priorities and close flags never write back to ZenTao and are not included in the snapshot cache; they are merged at response time.
 - Status is derived at read time: `closed` when the local flag is set, otherwise `testing` when the current time is inside the window, `upcoming` before it, `ended` after it, and `unplanned` when no window is set.
-- The dashboard `发版：…` line only lists versions with a configured test start or end time and follows the same pin/priority ordering.
+- The dashboard awaiting-release count and `发版：…` line only include versions with a configured test start or end time; unplanned versions remain in version readiness but are not counted. Both follow the same pin/priority ordering.
 - The 发版管理 page has no separate permission switch. Anyone who can open the local workbench can edit the windows, pinning, priorities and close/reopen releases.
 
 ## Environment variables

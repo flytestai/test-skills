@@ -271,6 +271,8 @@ test('dailyFocus 合并待验证 Bug、待发版版本与待完成任务的综�
   assert.equal(focus.tasks.pending, 4);
   assert.equal(focus.tasks.doneToday, 1);
   assert.deepEqual(focus.versions.items.map((item) => item.name).sort(), ['2.8.0', '3.8.2']);
+  assert.equal(focus.versions.pending, 0);
+  assert.equal(focus.versions.scheduled, 0);
   const version = focus.versions.items.find((item) => item.name === '3.8.2');
   assert.equal(version.pendingBugs, 1);
   assert.equal(version.progress, 50);
@@ -376,10 +378,13 @@ test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
   assert.equal(version.testStart, '2026-10-01T09:00');
   assert.equal(version.testEnd, '2099-12-31T18:00');
   assert.equal(version.releaseStatus, 'testing');
+  assert.equal(focus.versions.pending, 1);
+  assert.equal(focus.versions.scheduled, 1);
 
   state.tasks[0].execution = 'PC2.8.0版本';
   state.releases[0].status = 'closed';
   state.releases[0].closed = true;
   const closedFocus = Core.dailyFocus(state, FIXED_DATE);
   assert.equal(closedFocus.versions.items.some((item) => item.key === '2.8.0'), false);
+  assert.equal(closedFocus.versions.pending, 0);
 });

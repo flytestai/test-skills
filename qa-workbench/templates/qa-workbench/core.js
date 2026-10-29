@@ -897,6 +897,7 @@
     ));
 
     const versionTotal = versionItems.length;
+    const scheduledVersionTotal = versionItems.filter((item) => item.testStart || item.testEnd).length;
     const versionReadiness = versionItems.reduce((sum, item) => sum + item.progress, 0) / 100;
     // 综合进度只统计待验证 Bug 和待完成任务；版本就绪度单独展示，不计入百分比。
     const plannedCount = bugTotal + taskTotal;
@@ -921,7 +922,8 @@
       },
       versions: {
         total: versionTotal,
-        pending: versionTotal,
+        pending: scheduledVersionTotal,
+        scheduled: scheduledVersionTotal,
         doneToday: 0,
         progress: versionTotal ? Math.round(versionReadiness * 100 / versionTotal) : 0,
         items: versionItems
@@ -1680,6 +1682,7 @@
     setBugStatus,
     filterTasks,
     filterBugs,
+    versionKey,
     uniqueBy,
     renderRichText,
     extractAttachments,

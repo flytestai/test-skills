@@ -553,11 +553,14 @@
       case 'bugs': {
         const versionFilter = ui && ui.bugFilters && ui.bugFilters.version;
         const kindFilter = ui && ui.bugFilters && ui.bugFilters.releaseKind;
+        const kindLabel = kindFilter === 'open'
+          ? '未关闭 Bug'
+          : kindFilter === 'pending' ? '待验证 Bug' : '全部状态';
         return {
           eyebrow: 'QUALITY / BUG TRACKER',
           title: 'Bug 跟踪',
           subtitle: versionFilter
-            ? `版本 ${versionFilter} · ${kindFilter === 'open' ? '未关闭 Bug' : '待验证 Bug'} · 来自发版管理`
+            ? `版本 ${versionFilter} · ${kindLabel}${kindFilter ? ' · 来自发版管理' : ''}`
             : `${state.allBugs.length} 个账号相关 Bug · ${(state.products || []).length} 个产品 · 按更新时间排序`
         };
       }
@@ -1475,6 +1478,18 @@
     });
   }
 
+  function bugVersionOptions() {
+    const counts = new Map();
+    visibleBugs().forEach((bug) => {
+      const key = Core.versionKey(bug.version);
+      if (!key) return;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    });
+    const selected = ui.bugFilters.version;
+    if (selected && !counts.has(selected)) counts.set(selected, 0);
+    return Array.from(counts.entries()).sort((a, b) => b[0].localeCompare(a[0], 'zh-CN', { numeric: true }));
+  }
+
   function filteredBugs() {
     let bugs = Core.filterBugs(visibleBugs(), ui.bugFilters);
     if (ui.bugFilters.type && ui.bugFilters.type !== 'all') {
@@ -1606,6 +1621,10 @@
           <option value="all">全部产品</option>
           ${(state.products || []).map((product) => `<option value="${esc(product.name)}"${f.product === product.name ? ' selected' : ''}>${esc(product.name)}（${product.bugCount || 0}）</option>`).join('')}
         </select>
+        <select class="select" data-filter="bug-version" aria-label="按版本筛选">
+          <option value="all">全部版本</option>
+          ${bugVersionOptions().map(([key, count]) => `<option value="${esc(key)}"${f.version === key ? ' selected' : ''}>${esc(key)}（${count}）</option>`).join('')}
+        </select>
         <select class="select" data-filter="bug-type" aria-label="按类型筛选">
           <option value="all">全部类型</option>
           ${(state.creation && state.creation.types ? state.creation.types : []).map((type) => `<option value="${esc(type.value)}"${f.type === type.value ? ' selected' : ''}>${esc(type.label)}</option>`).join('')}
@@ -1616,7 +1635,7 @@
       ${bugClassificationPanel()}
       ${f.version ? `<div class="release-bug-filter">
         <span class="release-bug-filter-label">${icon('layers')}版本 ${esc(f.version)}</span>
-        <span>${f.releaseKind === 'open' ? '未关闭 Bug' : '待验证 Bug'}</span>
+        <span>${f.releaseKind === 'open' ? '未关闭 Bug' : f.releaseKind === 'pending' ? '待验证 Bug' : '全部状态'}</span>
         <span class="release-bug-filter-count">${filteredBugs().length} 个</span>
         <button class="release-bug-filter-clear" type="button" data-action="clear-release-bug-filter" aria-label="清除版本筛选">${icon('close')}清除版本筛选</button>
       </div>` : ''}
@@ -4133,6 +4152,14 @@
     if (target.matches('[data-filter="bug-product"]')) {
       ui.bugFilters.product = target.value;
       renderBugResults();
+      return;
+    }
+    if (target.matches('[data-filter="bug-version"]')) {
+      const value = target.value;
+      if (!value || value === 'all') delete ui.bugFilters.version;
+      else ui.bugFilters.version = value;
+      delete ui.bugFilters.releaseKind;
+      renderView(false);
       return;
     }
     if (target.matches('[data-filter="bug-project"]')) {
