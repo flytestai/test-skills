@@ -750,6 +750,16 @@
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
     const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
     const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
+    const focusParts = [];
+    if (dailyFocus.bugs.pending) focusParts.push(`${dailyFocus.bugs.pending} 个待验证 Bug`);
+    if (dailyFocus.versions.pending) focusParts.push(`${dailyFocus.versions.pending} 个版本待发版`);
+    if (dailyFocus.tasks.pending) focusParts.push(`${dailyFocus.tasks.pending} 项任务待完成`);
+    const focusSummary = focusParts.length
+      ? `今天有 ${focusParts.join('、')}。`
+      : '今天没有待验证 Bug、待发版版本或待完成任务。';
+    const severeSummary = m.bugSevere
+      ? `当前有 ${m.bugSevere} 个未关闭的 P0/P1 Bug，${dailyFocus.bugs.pending ? '建议优先验证高优先级项' : '建议优先确认阻塞项'}。`
+      : '当前没有未关闭的 P0/P1 Bug。';
     const focusOnTrack = dailyFocus.progress >= 60;
     const focusColor = focusOnTrack ? '#5fe0a8' : '#ff6b6b';
     const focusLabel = dailyFocus.progress >= 80 ? '进度较快' : focusOnTrack ? '进度正常' : '进度偏慢';
@@ -770,7 +780,7 @@
         <div class="hero-copy">
           <div class="hero-kicker"><span class="live-dot"></span>${esc(todayLabel)} · 禅道数据 ${esc(fmtDateTime(state.sync && state.sync.lastSyncAt))}</div>
           <h2>${greeting()}，<span>${esc(state.profile.name)}</span></h2>
-          <p>今天有 ${dailyFocus.bugs.pending} 个待验证 Bug、${dailyFocus.versions.pending} 个待发版版本、${dailyFocus.tasks.pending} 项待完成任务${m.bugSevere ? `，其中 ${m.bugSevere} 个 P0/P1 Bug 需要重点关注` : '，当前没有高优先级缺陷'}。先处理关键路径，再留一点复盘时间。</p>
+          <p>${focusSummary}${severeSummary}</p>
         </div>
         <div class="hero-progress-wrap" style="--focus-color:${focusColor}">
           <div class="focus-ring-wrap">
