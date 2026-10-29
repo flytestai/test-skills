@@ -10,8 +10,10 @@ const {
   parseSeverityInput,
   scopeBugs,
   scopeTasks,
+  createHttpServer,
   scheduledSyncAt,
-  createHttpServer
+  syncScheduleText,
+  config
 } = require('../server');
 const {
   Store,
@@ -19,6 +21,55 @@ const {
   normalizeSettings,
   defaultData
 } = require('../lib/store');
+
+function formatLocal(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+test('scheduledSyncAt runs every 30 minutes on workdays inside the configured window', () => {
+  const saved = {
+    syncIntervalMinutes: config.zentao.syncIntervalMinutes,
+    syncWindow: config.zentao.syncWindow,
+    syncWorkdays: config.zentao.syncWorkdays
+  };
+  config.zentao.syncIntervalMinutes = 30;
+  config.zentao.syncWindow = { start: '08:30', end: '18:00' };
+  config.zentao.syncWorkdays = [1, 2, 3, 4, 5];
+  try {
+    const next = (month, day, hour, minute) =>
+      formatLocal(scheduledSyncAt(new Date(2026, month - 1, day, hour, minute, 0, 0)));
+    assert.equal(next(10, 26, 8, 10), '2026-10-26 08:30');
+    assert.equal(next(10, 26, 8, 30), '2026-10-26 09:00');
+    assert.equal(next(10, 26, 12, 7), '2026-10-26 12:30');
+    assert.equal(next(10, 26, 17, 59), '2026-10-26 18:00');
+    assert.equal(next(10, 26, 18, 0), '2026-10-27 08:30');
+    assert.equal(next(10, 30, 18, 30), '2026-11-02 08:30');
+    assert.equal(next(10, 31, 10, 0), '2026-11-02 08:30');
+    assert.equal(syncScheduleText(), '工作日 08:30–18:00 每 30 分钟自动全量 · 其余时间手动');
+  } finally {
+    Object.assign(config.zentao, saved);
+  }
+});
+
+test('syncIntervalMinutes 0 falls back to the legacy fixed sync times', () => {
+  const saved = {
+    syncIntervalMinutes: config.zentao.syncIntervalMinutes,
+    syncTimes: config.zentao.syncTimes
+  };
+  config.zentao.syncIntervalMinutes = 0;
+  config.zentao.syncTimes = ['09:15', '17:45'];
+  try {
+    const at = (hour, minute) =>
+      formatLocal(scheduledSyncAt(new Date(2026, 9, 26, hour, minute, 0, 0)));
+    assert.equal(at(9, 0), '2026-10-26 09:15');
+    assert.equal(at(9, 15), '2026-10-26 17:45');
+    assert.equal(at(17, 45), '2026-10-27 09:15');
+    assert.equal(syncScheduleText(), '每天 09:15 / 17:45 自动全量 · 其余时间手动');
+  } finally {
+    Object.assign(config.zentao, saved);
+  }
+});
 
 function withTempStore(fn) {
   const dir = fs.mkdtempSync(path.join(__dirname, '.tmp-store-'));
@@ -103,21 +154,6 @@ test('parseSeverityInput supports P labels and raw priorities', () => {
   assert.equal(parseSeverityInput('0'), '');
   assert.equal(parseSeverityInput('P4'), '');
   assert.equal(parseSeverityInput(''), '');
-});
-
-test('scheduledSyncAt picks the next daily sync slot', () => {
-  const morning = scheduledSyncAt(new Date(2026, 9, 29, 8, 0, 0));
-  assert.equal(morning.getHours(), 8);
-  assert.equal(morning.getMinutes(), 30);
-
-  const noon = scheduledSyncAt(new Date(2026, 9, 29, 9, 30, 0));
-  assert.equal(noon.getHours(), 12);
-  assert.equal(noon.getMinutes(), 0);
-
-  const evening = scheduledSyncAt(new Date(2026, 9, 29, 18, 0, 0));
-  assert.equal(evening.getDate(), 30);
-  assert.equal(evening.getHours(), 8);
-  assert.equal(evening.getMinutes(), 30);
 });
 
 test('scope filters keep Bug and task counts consistent', () => {

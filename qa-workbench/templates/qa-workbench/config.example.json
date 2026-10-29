@@ -13,6 +13,9 @@
     "serverVersion": "",
     "cacheSeconds": 300,
     "syncTimes": ["08:30", "12:00", "17:00"],
+    "syncIntervalMinutes": 30,
+    "syncWindow": { "start": "08:30", "end": "18:00" },
+    "syncWorkdays": [1, 2, 3, 4, 5],
     "refreshCooldownMs": 5000,
     "moduleNames": {},
     "bugModules": [

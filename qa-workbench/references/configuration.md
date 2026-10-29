@@ -29,6 +29,9 @@ Start from `config.example.json`. The installer creates this file automatically.
     "openedBuildLabel": "主干",
     "serverVersion": "22.4",
     "cacheSeconds": 300,
+    "syncIntervalMinutes": 30,
+    "syncWindow": { "start": "08:30", "end": "18:00" },
+    "syncWorkdays": [1, 2, 3, 4, 5],
     "refreshCooldownMs": 5000,
     "moduleNames": {},
     "bugModules": [
@@ -54,7 +57,11 @@ Start from `config.example.json`. The installer creates this file automatically.
 | `zentao.openedBuild` | no | Build value used when creating a Bug, default `trunk` |
 | `zentao.openedBuildLabel` | no | Display label for the build |
 | `zentao.serverVersion` | no | Informational ZenTao version shown in settings |
-| `zentao.cacheSeconds` | no | Background refresh interval, minimum 60, default 300 |
+| `zentao.cacheSeconds` | no | Snapshot freshness threshold, minimum 60, default 300; display only, does not trigger sync |
+| `zentao.syncIntervalMinutes` | no | Workday full-sync interval in minutes, default 30; set to 0 to use fixed `syncTimes` instead |
+| `zentao.syncWindow` | no | Auto-sync window, default `{ "start": "08:30", "end": "18:00" }`; no automatic sync outside it |
+| `zentao.syncWorkdays` | no | Weekdays for auto-sync, default `[1,2,3,4,5]` (Mon–Fri); 0 is Sunday |
+| `zentao.syncTimes` | no | Legacy fixed times used only when `syncIntervalMinutes` is 0, default `["08:30","12:00","17:00"]` |
 | `zentao.refreshCooldownMs` | no | Minimum gap between manual refreshes |
 | `zentao.cliPath` | no | Optional explicit path to the ZenTao CLI JS entry |
 | `zentao.moduleNames` | no | Map of module IDs to display names |
@@ -79,6 +86,10 @@ Start from `config.example.json`. The installer creates this file automatically.
 | `ZENTAO_CLI_JS` | Explicit ZenTao CLI entry path |
 | `QDESK_AUTOJOB_ACCOUNTS` | Comma-separated AI customer-service accounts, default `autojob` |
 | `QDESK_AUTOJOB_PRODUCTS` | Comma-separated product IDs to scan; empty means all |
+| `QDESK_SYNC_INTERVAL_MINUTES` | Workday sync interval, default `30`; `0` falls back to `QDESK_SYNC_TIMES` |
+| `QDESK_SYNC_WINDOW` | Sync window in `08:30-18:00` form |
+| `QDESK_SYNC_WORKDAYS` | Comma-separated weekdays, default `1,2,3,4,5` |
+| `QDESK_SYNC_TIMES` | Legacy fixed times, used only when the interval is 0 |
 | `ZENTAO_URL`, `ZENTAO_TOKEN`, `ZENTAO_PASSWORD` | Read by the ZenTao CLI, not logged by QDesk |
 
 ## Account resolution order
@@ -113,7 +124,8 @@ This intentionally avoids the ZenTao 22.4 unsupported `my tasks`, `my bugs`, `bu
 
 ## Caching and concurrency
 
-- `cacheSeconds` controls the automatic background refresh interval.
+- `cacheSeconds` only controls the displayed `stale` flag; it does not schedule a refresh.
+- Full syncs run every 30 minutes on workdays inside the configured window. Weekends and the rest of the day are manual-only.
 - The first sync starts about 600 ms after server startup when no fresh snapshot exists.
 - `/api/sync` triggers a background refresh and returns immediately.
 - A failed sync keeps the previous snapshot and retries after roughly 60 seconds.

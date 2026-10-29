@@ -73,9 +73,9 @@ Important fields:
 3. When `revision` changes, fetch `/api/bootstrap` and render the new data.
 4. After a manual sync, poll until `syncing` becomes false and `revision` changes.
 
-Do not call `/api/bootstrap?refresh=1` in a loop; it starts a background sync and returns the old snapshot. Normal `/api/bootstrap` and `/api/bootstrap?meta=1` never start a full sync when a snapshot exists. Full syncs run only at `zentao.syncTimes` (default 08:30 / 12:00 / 17:00 local time), on an explicit `/api/sync`, or when no snapshot exists yet.
+Do not call `/api/bootstrap?refresh=1` in a loop; it starts a background sync and returns the old snapshot. Normal `/api/bootstrap` and `/api/bootstrap?meta=1` never start a full sync when a snapshot exists. Full syncs run every 30 minutes on workdays from 08:30 to 18:00 local time (configurable through `zentao.syncIntervalMinutes`, `zentao.syncWindow` and `zentao.syncWorkdays`), on an explicit `/api/sync`, or when no snapshot exists yet. Weekends and times outside the window are manual-only.
 
-`syncState` includes `schedule` (configured daily sync times) and `nextSyncAt` (next scheduled full sync, ISO timestamp). `cacheSeconds` still controls the displayed `stale` flag but no longer triggers a sync.
+`syncState` includes `schedule` (legacy fixed times), `scheduleText`, `mode`, `intervalMinutes`, `window`, `workdays` and `nextSyncAt` (next scheduled full sync, ISO timestamp). `cacheSeconds` only controls the displayed `stale` flag; it does not trigger a sync.
 
 ## Manual sync
 
@@ -130,7 +130,12 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
     "syncing": false,
     "stale": false,
     "schedule": ["08:30", "12:00", "17:00"],
-    "nextSyncAt": "2026-10-29T09:00:00.000Z",
+    "scheduleText": "工作日 08:30–18:00 每 30 分钟自动全量 · 其余时间手动",
+    "mode": "interval",
+    "intervalMinutes": 30,
+    "window": { "start": "08:30", "end": "18:00" },
+    "workdays": [1, 2, 3, 4, 5],
+    "nextSyncAt": "2026-10-29T09:30:00.000Z",
     "revision": 1
   },
   "generatedAt": "..."

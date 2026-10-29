@@ -2239,7 +2239,7 @@
           <div><span>产品范围</span><strong>${products.length} 个产品${products.length ? ` · 主产品 ${esc(product.name || '')}` : ''}</strong></div>
           <div><span>项目范围</span><strong>${projects.length} 个项目</strong></div>
           <div><span>客服反馈源</span><strong>${z.autojob && z.autojob.enabled ? `${(z.autojob.accounts || []).join(', ')} · ${z.autojob.scannedProducts || 0} 个产品` : '未启用'}</strong></div>
-          <div><span>同步方式</span><strong>每天 ${(syncState.schedule || ['08:30', '12:00', '17:00']).join(' / ')} 自动全量 · 其余时间手动或单条更新</strong></div>
+          <div><span>同步方式</span><strong>${esc(syncState.scheduleText || `每天 ${(syncState.schedule || ['08:30', '12:00', '17:00']).join(' / ')} 自动全量 · 其余时间手动`)}</strong></div>
           <div><span>下次自动同步</span><strong>${esc(syncState.nextSyncAt ? fmtFullDate(syncState.nextSyncAt) : '—')}</strong></div>
           <div><span>最近同步</span><strong>${esc(fmtFullDate(sync.lastSyncAt))}</strong></div>
           <div><span>读取耗时</span><strong>${sync.durationMs ? `${(sync.durationMs / 1000).toFixed(1)} 秒` : '—'}</strong></div>

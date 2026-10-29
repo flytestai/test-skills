@@ -59,6 +59,9 @@ const DEFAULT_CONFIG = {
     serverVersion: '22.4',
     cacheSeconds: 300,
     syncTimes: ['08:30', '12:00', '17:00'],
+    syncIntervalMinutes: 30,
+    syncWindow: { start: '08:30', end: '18:00' },
+    syncWorkdays: [1, 2, 3, 4, 5],
     refreshCooldownMs: 5000,
     cliPath: '',
     moduleNames: {},
@@ -138,6 +141,16 @@ function loadConfig() {
     config.zentao.syncTimes = String(process.env.QDESK_SYNC_TIMES)
       .split(',').map((time) => time.trim()).filter(Boolean);
   }
+  if (process.env.QDESK_SYNC_INTERVAL_MINUTES) {
+    config.zentao.syncIntervalMinutes = Number(process.env.QDESK_SYNC_INTERVAL_MINUTES);
+  }
+  if (process.env.QDESK_SYNC_WINDOW) {
+    config.zentao.syncWindow = String(process.env.QDESK_SYNC_WINDOW).trim();
+  }
+  if (process.env.QDESK_SYNC_WORKDAYS) {
+    config.zentao.syncWorkdays = String(process.env.QDESK_SYNC_WORKDAYS)
+      .split(',').map((day) => Number(day.trim())).filter((day) => Number.isInteger(day));
+  }
   config.server.port = Math.max(1, Math.min(65535, Number(config.server.port) || 4173));
   config.server.host = config.server.host || '127.0.0.1';
   config.tester.account = String(config.tester.account || '').trim();
@@ -153,6 +166,30 @@ function loadConfig() {
     .filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time))
     .sort();
   if (!config.zentao.syncTimes.length) config.zentao.syncTimes = DEFAULT_CONFIG.zentao.syncTimes.slice();
+  const intervalValue = Number(config.zentao.syncIntervalMinutes);
+  config.zentao.syncIntervalMinutes = Number.isFinite(intervalValue) && intervalValue >= 0
+    ? Math.min(720, Math.round(intervalValue))
+    : DEFAULT_CONFIG.zentao.syncIntervalMinutes;
+  const rawWindow = config.zentao.syncWindow;
+  let windowStart = '';
+  let windowEnd = '';
+  if (typeof rawWindow === 'string') {
+    const parts = rawWindow.split('-').map((part) => part.trim());
+    windowStart = parts[0] || '';
+    windowEnd = parts[1] || '';
+  } else if (rawWindow && typeof rawWindow === 'object') {
+    windowStart = String(rawWindow.start || '').trim();
+    windowEnd = String(rawWindow.end || '').trim();
+  }
+  const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+  if (!timePattern.test(windowStart)) windowStart = DEFAULT_CONFIG.zentao.syncWindow.start;
+  if (!timePattern.test(windowEnd) || windowEnd <= windowStart) windowEnd = DEFAULT_CONFIG.zentao.syncWindow.end;
+  config.zentao.syncWindow = { start: windowStart, end: windowEnd };
+  config.zentao.syncWorkdays = (Array.isArray(config.zentao.syncWorkdays) ? config.zentao.syncWorkdays : DEFAULT_CONFIG.zentao.syncWorkdays)
+    .map((day) => Number(day))
+    .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6);
+  config.zentao.syncWorkdays = Array.from(new Set(config.zentao.syncWorkdays)).sort((a, b) => a - b);
+  if (!config.zentao.syncWorkdays.length) config.zentao.syncWorkdays = DEFAULT_CONFIG.zentao.syncWorkdays.slice();
   config.zentao.refreshCooldownMs = Math.max(0, Number(config.zentao.refreshCooldownMs) || 0);
   config.zentao.openedBuild = String(config.zentao.openedBuild || 'trunk');
   config.zentao.openedBuildLabel = String(config.zentao.openedBuildLabel || '主干');
@@ -897,6 +934,11 @@ function currentSyncState() {
     cacheSeconds: config.zentao.cacheSeconds,
     stale: !snapshot || Date.now() - snapshotAt >= ttl,
     schedule: config.zentao.syncTimes,
+    scheduleText: syncScheduleText(),
+    mode: config.zentao.syncIntervalMinutes > 0 ? 'interval' : 'times',
+    intervalMinutes: config.zentao.syncIntervalMinutes,
+    window: config.zentao.syncWindow,
+    workdays: config.zentao.syncWorkdays,
     nextSyncAt: scheduledSyncAt().toISOString(),
     revision: snapshotRevision,
     lastError: lastConnectionError || null
@@ -1071,23 +1113,64 @@ function triggerSync(options) {
   return task;
 }
 
-function scheduledSyncAt(from) {
-  const now = from instanceof Date ? new Date(from.getTime()) : new Date();
+function timeToMinutes(value) {
+  const [hour, minute] = String(value || '').split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function syncScheduleText() {
+  const interval = config.zentao.syncIntervalMinutes;
+  if (interval > 0) {
+    const days = config.zentao.syncWorkdays || [];
+    const workdayText = days.length === 7
+      ? '每天'
+      : days.length === 5 && days.every((day, index) => day === index + 1)
+        ? '工作日'
+        : `周${days.map((day) => '日一二三四五六'[day]).join('、')}`;
+    return `${workdayText} ${config.zentao.syncWindow.start}–${config.zentao.syncWindow.end} 每 ${interval} 分钟自动全量 · 其余时间手动`;
+  }
   const times = config.zentao.syncTimes && config.zentao.syncTimes.length
     ? config.zentao.syncTimes
     : DEFAULT_CONFIG.zentao.syncTimes;
-  for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
-    for (const value of times) {
-      const [hour, minute] = value.split(':').map(Number);
-      const candidate = new Date(now.getTime());
-      candidate.setDate(candidate.getDate() + dayOffset);
-      candidate.setHours(hour, minute, 0, 0);
+  return `每天 ${times.join(' / ')} 自动全量 · 其余时间手动`;
+}
+
+function scheduledSyncAt(from) {
+  const now = from instanceof Date ? new Date(from.getTime()) : new Date();
+  const interval = config.zentao.syncIntervalMinutes;
+  if (!(interval > 0)) {
+    const times = config.zentao.syncTimes && config.zentao.syncTimes.length
+      ? config.zentao.syncTimes
+      : DEFAULT_CONFIG.zentao.syncTimes;
+    for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
+      for (const value of times) {
+        const [hour, minute] = value.split(':').map(Number);
+        const candidate = new Date(now.getTime());
+        candidate.setDate(candidate.getDate() + dayOffset);
+        candidate.setHours(hour, minute, 0, 0);
+        if (candidate.getTime() > now.getTime()) return candidate;
+      }
+    }
+    const fallback = new Date(now.getTime());
+    fallback.setDate(fallback.getDate() + 1);
+    fallback.setHours(8, 30, 0, 0);
+    return fallback;
+  }
+
+  const start = timeToMinutes(config.zentao.syncWindow.start);
+  const end = timeToMinutes(config.zentao.syncWindow.end);
+  const workdays = config.zentao.syncWorkdays || DEFAULT_CONFIG.zentao.syncWorkdays;
+  for (let dayOffset = 0; dayOffset <= 8; dayOffset += 1) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, 0, 0, 0, 0);
+    if (!workdays.includes(day.getDay())) continue;
+    for (let minutes = start; minutes <= end; minutes += interval) {
+      const candidate = new Date(day.getTime());
+      candidate.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
       if (candidate.getTime() > now.getTime()) return candidate;
     }
   }
-  const fallback = new Date(now.getTime());
-  fallback.setDate(fallback.getDate() + 1);
-  fallback.setHours(8, 30, 0, 0);
+  const fallback = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+  fallback.setHours(Math.floor(start / 60), start % 60, 0, 0);
   return fallback;
 }
 
@@ -2094,7 +2177,7 @@ function start() {
     console.log('  QDesk · 测试工作台');
     console.log(`  本地地址: http://${config.server.host === '0.0.0.0' ? '127.0.0.1' : config.server.host}:${config.server.port}`);
     console.log(`  禅道账号: ${config.tester.account}（同步读取；Bug 创建、编辑与状态流转通过 CLI 写入）`);
-    console.log(`  同步范围: 账号可访问的全部产品与项目 · 自动全量同步 ${config.zentao.syncTimes.join(' / ')}（本地时间），其余时间仅手动或单条更新`);
+    console.log(`  同步范围: 账号可访问的全部产品与项目 · ${syncScheduleText()}（本地时间）`);
     if (snapshot) {
       console.log(`  已载入缓存: ${snapshot.sync ? snapshot.sync.lastSyncAt : '未知时间'}`);
     } else {
@@ -2126,6 +2209,7 @@ module.exports = {
   buildSnapshot,
   triggerSync,
   scheduledSyncAt,
+  syncScheduleText,
   refreshSnapshotBug,
   applyBugToSnapshot,
   removeBugFromSnapshot,

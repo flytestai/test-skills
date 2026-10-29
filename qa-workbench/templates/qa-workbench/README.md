@@ -108,7 +108,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 ### 偏好与数据
 
 - 配置禅道连接（URL、账号、密码、显示姓名）。
-- 展示产品数、项目数、每日自动同步时间、下次同步时间、最近同步时间、同步耗时和错误。
+- 展示产品数、项目数、自动同步计划、下次同步时间、最近同步时间、同步耗时和错误。
 - 维护岗位、团队、迭代等展示信息。
 - 任务与 Bug 的 JSON / CSV 导出。
 
@@ -116,7 +116,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 
 - 服务启动时读取 `data/snapshot-cache.json` 中的最近成功快照。
 - `/api/bootstrap` 立即返回本地快照，页面打开不等待禅道 CLI。
-- 每天 **08:30 / 12:00 / 17:00**（本地时间）自动执行一次全量同步；其余时间不会因为快照过期而自动全量同步，只有用户点击「立即同步」才触发全量同步。
+- 工作日 **08:30–18:00**（本地时间）每 **30 分钟**自动执行一次全量同步；周末和每天 18:00 之后不自动同步，只有用户点击「立即同步」才触发全量同步。
 - 首次安装没有本地快照时，会在后台执行一次初始化同步。
 - 首次启动无快照时会返回结构完整的空快照，页面显示后台读取进度。
 - 同步失败时保留旧快照，继续显示上一次数据，并记录脱敏错误。
@@ -142,7 +142,10 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 | `tester.account` | 当前禅道登录账号；使用 CLI Profile 时需填写 |
 | `tester.name` | 显示姓名，可留空 |
 | `zentao.cacheSeconds` | 快照新鲜度阈值，最小 60，默认 300；只用于展示 `stale`，不再触发自动同步 |
-| `zentao.syncTimes` | 每天自动全量同步的时间点，默认 `["08:30", "12:00", "17:00"]`，使用本机时区 |
+| `zentao.syncIntervalMinutes` | 工作日自动全量同步间隔（分钟），默认 `30`，使用本机时区；设为 `0` 时改用 `syncTimes` 固定时间点 |
+| `zentao.syncWindow` | 自动同步时间窗，默认 `{ "start": "08:30", "end": "18:00" }`；窗口外不自动同步 |
+| `zentao.syncWorkdays` | 自动同步的星期，默认 `[1, 2, 3, 4, 5]`（周一至周五）；`0` 为周日 |
+| `zentao.syncTimes` | 旧版固定同步时间点，仅当 `syncIntervalMinutes` 为 `0` 时生效，默认 `["08:30", "12:00", "17:00"]` |
 | `zentao.openedBuild` | 创建 Bug 时的影响版本，默认 `trunk` |
 | `zentao.openedBuildLabel` | 影响版本显示名，默认「主干」 |
 | `zentao.moduleNames` | 可选：模块 ID 到显示名的映射 |
@@ -161,7 +164,10 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - `ZENTAO_CLI_JS`
 - `QDESK_AUTOJOB_ACCOUNTS`（逗号分隔，默认 `autojob`）
 - `QDESK_AUTOJOB_PRODUCTS`（逗号分隔产品 ID，留空表示全部）
-- `QDESK_SYNC_TIMES`（逗号分隔的每日同步时间，默认 `08:30,12:00,17:00`）
+- `QDESK_SYNC_INTERVAL_MINUTES`（工作日同步间隔分钟，默认 `30`，设为 `0` 回退固定时间）
+- `QDESK_SYNC_WINDOW`（同步时间窗，格式 `08:30-18:00`）
+- `QDESK_SYNC_WORKDAYS`（逗号分隔的星期，默认 `1,2,3,4,5`）
+- `QDESK_SYNC_TIMES`（旧版固定同步时间，仅当间隔为 `0` 时生效）
 
 ## Windows 开机自启
 
