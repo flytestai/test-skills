@@ -778,11 +778,14 @@
           </div>
         </div>
         <div class="hero-progress-wrap" style="--focus-color:${focusColor}">
-          <div class="focus-ring ${focusOnTrack ? 'is-good' : 'is-slow'}" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%，${focusLabel}">
-            <div class="focus-ring-inner">
-              <strong>${dailyFocus.progress}<span>%</span></strong>
-              <small>当日进度</small>
+          <div class="focus-ring-wrap">
+            <div class="focus-ring ${focusOnTrack ? 'is-good' : 'is-slow'}" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%，${focusLabel}">
+              <div class="focus-ring-inner">
+                <strong>${dailyFocus.progress}<span>%</span></strong>
+                <small>当日进度</small>
+              </div>
             </div>
+            <span class="focus-status">${focusLabel}</span>
           </div>
           <div class="hero-progress-meta">
             <strong>${dailyFocus.completedCount} / ${dailyFocus.plannedCount} 项已推进</strong>
@@ -805,8 +808,6 @@
                 <span class="focus-breakdown-value">${dailyFocus.tasks.doneToday}/${dailyFocus.tasks.total}</span>
               </div>
             </div>
-            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}</span>
-            <div class="mini-line"><i style="width:${dailyFocus.progress}%"></i></div>
           </div>
         </div>
       </section>
