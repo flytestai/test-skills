@@ -757,11 +757,11 @@
     const focusSummary = focusParts.length
       ? `今天有 ${focusParts.join('、')}。`
       : '今天没有待验证 Bug、待发版版本或待完成任务。';
-    const severeOpenBugs = state.bugs.filter((bug) => bug.status !== 'closed' && (
+    const assignedOpenBugs = (state.allBugs || []).filter((bug) => bug.isAssignedToMe && bug.status !== 'closed');
+    const assignedOpenCount = assignedOpenBugs.length;
+    const severeAssignedToMe = assignedOpenBugs.filter((bug) => (
       bug.severity === 'P0' || bug.severity === 'P1' || bug.pri === 'P0' || bug.pri === 'P1'
-    ));
-    const severeAssignedToMe = severeOpenBugs.filter((bug) => bug.isAssignedToMe).length;
-    const severeHandedOff = severeOpenBugs.length - severeAssignedToMe;
+    )).length;
     const severeSummary = severeAssignedToMe
       ? `当前有 ${severeAssignedToMe} 个指派给我的 P0/P1 Bug 未关闭，建议优先处理。`
       : '当前没有指派给我的未关闭 P0/P1 Bug。';
@@ -837,10 +837,10 @@
               <div class="kpi-pending-empty">${icon('check-circle')}<span>暂无待验证 Bug</span></div>`}
           </div>
         </article>
-        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-bugs" aria-label="查看我提交的未关闭 Bug" title="打开 Bug 跟踪">
-          <div class="kpi-top"><span class="kpi-label">我提交的未关闭 Bug</span><span class="kpi-icon tint-red">${icon('bug')}</span></div>
-          <div class="kpi-value">${m.bugOpen}<small>个</small></div>
-          <div class="kpi-foot">${severeOpenBugs.length ? `<span class="${severeAssignedToMe ? 'danger' : ''}">${severeAssignedToMe}</span> 个在我名下 · ${severeHandedOff} 个已转交` : '<span class="up">暂无 P0/P1</span>'}</div>
+        <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-bugs" aria-label="查看指派给我的未关闭 Bug" title="打开 Bug 跟踪">
+          <div class="kpi-top"><span class="kpi-label">指派给我的未关闭 Bug</span><span class="kpi-icon tint-red">${icon('bug')}</span></div>
+          <div class="kpi-value">${assignedOpenCount}<small>个</small></div>
+          <div class="kpi-foot">${assignedOpenCount ? (severeAssignedToMe ? `<span class="danger">${severeAssignedToMe}</span> 个 P0/P1 待处理` : '<span class="up">暂无 P0/P1</span>') : '<span class="up">暂无未关闭 Bug</span>'}</div>
         </article>
         <article class="kpi-card is-clickable" role="button" tabindex="0" data-action="kpi-due" aria-label="查看今日到期任务" title="打开今日到期任务">
           <div class="kpi-top"><span class="kpi-label">今日到期</span><span class="kpi-icon tint-amber">${icon('calendar')}</span></div>
@@ -3519,7 +3519,7 @@
       return;
     }
     if (action === 'kpi-bugs') {
-      ui.bugScope = 'opened';
+      ui.bugScope = 'assigned';
       ui.bugFilters = { q: '', status: 'unclosed', severity: 'all', type: 'all', product: 'all', project: 'all' };
       navigate('bugs');
       persistState();
