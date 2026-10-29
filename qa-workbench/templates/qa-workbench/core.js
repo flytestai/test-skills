@@ -1027,9 +1027,94 @@
     return Array.from(new Map(items.map((item) => [item[key], item])).values());
   }
 
+  function reportTaskProgress(task) {
+    if (!task) return 0;
+    if (task.status === 'done') return 100;
+    const consumed = Math.max(0, Number(task.consumed) || 0);
+    const left = Math.max(0, Number(task.left) || 0);
+    const estimate = Math.max(0, Number(task.estimate) || 0);
+    let progress = 0;
+    if (consumed + left > 0) progress = consumed / (consumed + left) * 100;
+    else if (consumed > 0 && estimate > 0) progress = consumed / estimate * 100;
+    if (!progress && task.status === 'doing') progress = 50;
+    if (!progress && task.status === 'blocked') progress = 30;
+    return Math.max(0, Math.min(99, Math.round(progress)));
+  }
+
+  function reportTaskItems(state, day) {
+    const tasks = state.tasks || [];
+    const items = new Map();
+    tasks.forEach((task) => {
+      const doneToday = task.completedAt && localDate(task.completedAt) === day;
+      const activeToday = task.status !== 'done' && (
+        task.status === 'doing'
+        || task.status === 'blocked'
+        || task.dueDate === day
+        || (task.updatedAt && localDate(task.updatedAt) === day)
+        || (task.history || []).some((item) => item && item.at && localDate(item.at) === day)
+      );
+      if (doneToday || activeToday) items.set(task.id, task);
+    });
+    return Array.from(items.values()).sort(compareTasks).slice(0, 12);
+  }
+
+  function reportVersionLines(state, day) {
+    const allTasks = state.allTasks || state.tasks || [];
+    const allBugs = state.allBugs || state.bugs || [];
+    const releases = Array.isArray(state.releases) && state.releases.length
+      ? state.releases
+      : releaseCatalog({ tasks: allTasks, bugs: allBugs }, state.releasePlans || {});
+    const scheduled = releases.filter((item) => !item.closed && (item.testStart || item.testEnd));
+    if (!scheduled.length) return '暂无已设置测试时间的版本';
+    const focus = dailyFocus({
+      tasks: allTasks,
+      bugs: allBugs,
+      releases: scheduled,
+      tester: state.tester || null
+    }, day);
+    const progressMap = new Map(focus.versions.items.map((item) => [item.key, item.progress]));
+    return scheduled.map((item) => {
+      const progress = progressMap.has(item.key) ? progressMap.get(item.key) : item.taskProgress;
+      return `${item.name}版本测试进度：${progress}%`;
+    }).join('\n');
+  }
+
+  function reportAutojobBlock(state, day) {
+    const items = state.autojobBugs || (state.autojob && state.autojob.bugs) || [];
+    const account = String((state.tester && state.tester.account) || '');
+    const autojobAccounts = new Set([]
+      .concat((state.autojob && state.autojob.accounts) || [])
+      .concat(['autojob']));
+    const createdToday = items.filter((bug) => localDate(bug.createdAt) === day).length;
+    const closedToday = items.filter((bug) => (
+      bug.closedAt
+      && localDate(bug.closedAt) === day
+      && (!account || bug.closedByAccount === account || bug.autojobRelation === 'closed')
+    )).length;
+    const assignedToday = items.filter((bug) => {
+      const assignee = String(bug.assigneeAccount || '');
+      if (!assignee || assignee === 'closed' || assignee === account || autojobAccounts.has(assignee)) return false;
+      if (bug.status === 'closed') return false;
+      const historyAssigned = (bug.history || []).some((item) => (
+        item && item.at && localDate(item.at) === day && /指派/.test(String(item.text || ''))
+      ));
+      return historyAssigned || (bug.updatedAt && localDate(bug.updatedAt) === day);
+    }).length;
+    return `今日新增：${createdToday}\n验证已关闭BUG：${closedToday}\n指派开发：${assignedToday}`;
+  }
+
   function buildReport(state, date) {
     const day = isDateString(date) ? date : localDate();
-    const data = collectDailyData(state, day);
+    const rawTasks = state.tasks || [];
+    const rawBugs = state.bugs || [];
+    const tasks = rawTasks.some((task) => typeof task.isMine === 'boolean')
+      ? rawTasks.filter((task) => task.isMine)
+      : rawTasks;
+    const bugs = rawBugs.some((bug) => typeof bug.isMine === 'boolean')
+      ? rawBugs.filter((bug) => bug.isMine)
+      : rawBugs;
+    const reportState = Object.assign({}, state, { tasks, bugs });
+    const data = collectDailyData(reportState, day);
     const foundIds = new Set(data.foundBugs.map((bug) => bug.id));
     const verifiedOnly = data.verifiedBugs.filter((bug) => !foundIds.has(bug.id));
     const closedOnly = data.closedBugs.filter(
@@ -1073,14 +1158,20 @@
       riskParts.push(`- ${bug.id} [${bug.pri}] ${bug.title}：客服反馈待处理（${bug.project}）`);
     });
 
+    const versionLines = reportVersionLines(state, day);
+    const bugSummary = `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}  剩余未关闭bug：${bugs.filter(isBugOpen).length}`;
+    const reportTasks = reportTaskItems(reportState, day);
+    const taskLines = reportTasks.map((task, index) => (
+      `${index + 1}.${task.title}  完成进度：${reportTaskProgress(task)}%`
+    ));
+    const autojobBlock = reportAutojobBlock(reportState, day);
+
     const summaryBits = [];
-    summaryBits.push(`今日完成 ${data.doneTasks.length} 项任务`);
-    summaryBits.push(`推进 ${data.ongoingTasks.length} 项`);
-    if (data.foundBugs.length) summaryBits.push(`新发现 ${data.foundBugs.length} 个 Bug`);
-    if (data.verifiedBugs.length) summaryBits.push(`验证 ${data.verifiedBugs.length} 个 Bug`);
-    if (data.autojobActive && data.autojobActive.length) {
-      summaryBits.push(`客服反馈待处理 ${data.autojobActive.length} 条`);
-    }
+    const firstVersion = versionLines.split('\n')[0];
+    if (firstVersion && firstVersion !== '暂无已设置测试时间的版本') summaryBits.push(firstVersion);
+    summaryBits.push(`今日新增 ${data.foundBugs.length} 个 Bug`);
+    summaryBits.push(`验收 ${data.closedBugs.length} 个 Bug`);
+    if (reportTasks.length) summaryBits.push(`${reportTasks.length} 项任务有进展`);
     const summary = summaryBits.join('，') + '。';
 
     return {
@@ -1089,12 +1180,18 @@
       status: 'draft',
       content: {
         summary,
+        version: versionLines,
+        bugsSummary: bugSummary,
+        tasks: taskLines.join('\n'),
+        autojob: autojobBlock,
         done: doneParts.join('\n'),
         bugs: bugParts.join('\n'),
         ongoing: ongoingParts.join('\n'),
         next: nextParts.join('\n'),
         risks: riskParts.join('\n')
       },
+      autoGenerated: true,
+      autoUpdatedAt: nowIso(),
       createdAt: nowIso(),
       updatedAt: nowIso(),
       submittedAt: null
@@ -1108,12 +1205,30 @@
   function renderReportMarkdown(report, profile) {
     const who = profile || {};
     const content = report.content || {};
-    return [
+    const templateReport = ['version', 'bugsSummary', 'tasks', 'autojob']
+      .some((key) => String(content[key] || '').trim());
+    const header = [
       `# 工作日报｜${report.date}`,
       `**${who.name || '测试工程师'}** · ${who.role || '测试开发工程师'}${who.team ? ` · ${who.team}` : ''}`,
       '',
       `> 日报状态：${report.status === 'submitted' ? '已提交' : '草稿'} · 生成时间：${new Date(report.updatedAt || report.createdAt || Date.now()).toLocaleString('zh-CN', { hour12: false })}`,
-      '',
+      ''
+    ];
+    if (templateReport) {
+      return header.concat([
+        String(content.version || '暂无已设置测试时间的版本').trim(),
+        String(content.bugsSummary || '今日新增bug：0  验收bug：0  剩余未关闭bug：0').trim(),
+        '',
+        '今日任务:',
+        String(content.tasks || '').trim() || '暂无今日任务记录',
+        '',
+        'AI客服今日：',
+        String(content.autojob || '').trim() || '今日新增：0\n验证已关闭BUG：0\n指派开发：0',
+        '---',
+        '由 QDesk 测试工作台生成'
+      ]).join('\n');
+    }
+    return header.concat([
       section('', '今日摘要', content.summary),
       section('', '已完成', content.done),
       section('', 'Bug 跟踪', content.bugs),
@@ -1122,7 +1237,7 @@
       section('', '风险与阻塞', content.risks),
       '---',
       '由 QDesk 测试工作台生成'
-    ].join('\n');
+    ]).join('\n');
   }
 
   function weekSeries(state, endDate) {
