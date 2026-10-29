@@ -772,11 +772,6 @@
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
     const versionNames = dailyFocus.versions.items.slice(0, 3).map((item) => item.name).join(' / ');
     const moreVersions = dailyFocus.versions.items.length > 3 ? ` 等 ${dailyFocus.versions.items.length} 个` : '';
-    const focusSummary = [
-      dailyFocus.bugs.pending ? `${dailyFocus.bugs.pending} 个待验证 Bug` : '',
-      dailyFocus.versions.pending ? `${dailyFocus.versions.pending} 个待发版版本` : '',
-      dailyFocus.tasks.pending ? `${dailyFocus.tasks.pending} 项待完成任务` : ''
-    ].filter(Boolean).join('、');
 
     const riskRows = Object.keys(Core.SEVERITY).map((key) => {
       const count = severity[key];
@@ -794,7 +789,7 @@
         <div class="hero-copy">
           <div class="hero-kicker"><span class="live-dot"></span>${esc(todayLabel)} · 禅道数据 ${esc(fmtDateTime(state.sync && state.sync.lastSyncAt))}</div>
           <h2>${greeting()}，<span>${esc(state.profile.name)}</span></h2>
-          <p>今天有 ${dailyFocus.pendingTotal} 项工作需要推进${focusSummary ? `（${focusSummary}）` : ''}${m.bugSevere ? `，${m.bugSevere} 个 P0/P1 Bug 需要重点关注` : '，当前没有高优先级缺陷'}。先处理关键路径，再留一点复盘时间。</p>
+          <p>今天有 ${dailyFocus.bugs.pending} 个待验证 Bug、${dailyFocus.versions.pending} 个待发版版本、${dailyFocus.tasks.pending} 项待完成任务${m.bugSevere ? `，其中 ${m.bugSevere} 个 P0/P1 Bug 需要重点关注` : '，当前没有高优先级缺陷'}。先处理关键路径，再留一点复盘时间。</p>
           <div class="hero-actions">
             <button class="btn btn-primary" type="button" data-action="navigate" data-view="tasks">${icon('play')}查看今日任务</button>
             <button class="btn" type="button" data-action="create-report">${icon('sparkles')}生成工作日报</button>
@@ -818,7 +813,7 @@
                 <span class="focus-breakdown-track"><b style="width:${dailyFocus.bugs.progress}%"></b></span>
                 <span class="focus-breakdown-value">${dailyFocus.bugs.doneToday}/${dailyFocus.bugs.total}</span>
               </div>
-              <div class="focus-breakdown-row">
+              <div class="focus-breakdown-row" title="版本就绪度仅展示，不计入今日推进综合进度">
                 <span class="focus-breakdown-label">版本就绪</span>
                 <span class="focus-breakdown-track is-version"><b style="width:${dailyFocus.versions.progress}%"></b></span>
                 <span class="focus-breakdown-value">${dailyFocus.versions.progress}%</span>
@@ -829,7 +824,7 @@
                 <span class="focus-breakdown-value">${dailyFocus.tasks.doneToday}/${dailyFocus.tasks.total}</span>
               </div>
             </div>
-            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}</span>
+            <span>${dailyFocus.progress >= 70 ? '节奏不错，保持收尾质量。' : '优先清掉待验证 Bug 与待发版版本的关键路径。'}${dailyFocus.versions.pending ? ' 版本就绪度仅供参考，不计入综合进度。' : ''}</span>
             <div class="mini-line"><i style="width:${dailyFocus.progress}%"></i></div>
           </div>
         </div>

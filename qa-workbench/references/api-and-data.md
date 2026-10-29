@@ -161,7 +161,7 @@ The dashboard `今日推进` ring is computed client-side by `Core.dailyFocus(st
 - versions awaiting release: versions with my pending or open Bugs, and recent executions (last 45 days) that still contain my unfinished tasks; versions whose only remaining work is stale historical tasks are ignored;
 - my unfinished tasks that are due today, overdue, or in progress.
 
-The ring mixes item counts with version readiness (completed tasks ÷ all tasks in that version); the three category rows show Bug verification, version readiness, and task completion separately.
+The ring percentage counts only pending-verification Bugs and my unfinished tasks. Version readiness (completed tasks ÷ all tasks in that version) is shown in its own row for reference and is not included in the percentage. The three category rows show Bug verification, version readiness, and task completion separately.
 
 The fourth dashboard KPI card is `今日待验证`. It lists every pending-verification Bug regardless of creation date, sorted by priority, inside a scrollable area. Each row is a `data-action="open-bug"` button that opens that Bug's detail page directly. A card click does not open a separate list page.
 

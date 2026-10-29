@@ -249,7 +249,9 @@ test('dailyFocus 合并待验证 Bug、待发版版本与待完成任务的综�
   const version = focus.versions.items.find((item) => item.name === '3.8.2');
   assert.equal(version.pendingBugs, 1);
   assert.equal(version.progress, 50);
-  assert.equal(focus.plannedCount, 9);
+  assert.equal(focus.plannedCount, 7);
+  assert.equal(focus.completedCount, 2);
+  assert.equal(focus.progress, 29);
   assert.ok(focus.progress > 0 && focus.progress < 100);
 
   const metrics = Core.metrics(state, FIXED_DATE);

@@ -759,9 +759,10 @@
 
     const versionTotal = versionItems.length;
     const versionReadiness = versionItems.reduce((sum, item) => sum + item.progress, 0) / 100;
-    const plannedCount = bugTotal + taskTotal + versionTotal;
-    const completedRaw = bugDone + taskDone + versionReadiness;
-    const progress = plannedCount ? Math.min(100, Math.round((completedRaw / plannedCount) * 100)) : 0;
+    // 综合进度只统计待验证 Bug 和待完成任务；版本就绪度单独展示，不计入百分比。
+    const plannedCount = bugTotal + taskTotal;
+    const completedCount = bugDone + taskDone;
+    const progress = plannedCount ? Math.min(100, Math.round((completedCount / plannedCount) * 100)) : 0;
 
     return {
       date: day,
@@ -787,8 +788,8 @@
         items: versionItems
       },
       plannedCount,
-      completedCount: Math.round(completedRaw),
-      pendingTotal: plannedCount - Math.min(plannedCount, Math.round(completedRaw)),
+      completedCount,
+      pendingTotal: pendingBugs.length + taskQueue.length,
       progress
     };
   }
