@@ -778,7 +778,7 @@
           </div>
         </div>
         <div class="hero-progress-wrap" style="--focus-color:${focusColor}">
-          <div class="focus-ring" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%，${focusLabel}">
+          <div class="focus-ring ${focusOnTrack ? 'is-good' : 'is-slow'}" style="--progress:${dailyFocus.progress}" role="img" aria-label="当日进度 ${dailyFocus.progress}%，${focusLabel}">
             <div class="focus-ring-inner">
               <strong>${dailyFocus.progress}<span>%</span></strong>
               <small>当日进度</small>
