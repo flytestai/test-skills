@@ -676,7 +676,6 @@
     return `<section class="autojob-banner" aria-label="客服反馈概览">
       <span class="autojob-mark">${icon('message')}</span>
       <div class="autojob-copy">
-        <div class="autojob-kicker"><span class="live-dot"></span>客服群聊 · AI 自动提取 · 每日关注</div>
         <h2>${esc(account)} 指派给我的客户反馈</h2>
         <p>${esc(info.description || '来自客服群聊天记录，自动提取为禅道 Bug')}。优先处理待验证与 P0/P1，已解决项等待客服或提交人确认。</p>
       </div>

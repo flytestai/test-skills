@@ -9085,18 +9085,8 @@ kbd {
 
 .autojob-mark svg { width: 21px; height: 21px; }
 
-.autojob-kicker {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #b85536;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: .08em;
-}
-
 .autojob-copy h2 {
-  margin: 3px 0 3px;
+  margin: 0 0 3px;
   color: var(--ink);
   font-size: 16px;
   letter-spacing: -.01em;
