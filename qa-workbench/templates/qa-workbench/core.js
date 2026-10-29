@@ -929,13 +929,14 @@
   function filterTasks(tasks, filters) {
     const f = filters || {};
     const query = String(f.q || '').trim().toLowerCase();
+    const day = f.date || localDate();
     return (tasks || [])
       .filter((task) => {
         if (f.status && f.status !== 'all' && task.status !== f.status) return false;
         if (f.priority && f.priority !== 'all' && task.priority !== f.priority) return false;
         if (f.project && f.project !== 'all' && task.project !== f.project) return false;
-        if (f.due === 'today' && task.dueDate !== localDate()) return false;
-        if (f.due === 'overdue' && !isTaskOverdue(task)) return false;
+        if (f.due === 'today' && task.dueDate !== day) return false;
+        if (f.due === 'overdue' && !isTaskOverdue(task, day)) return false;
         if (query) {
           const haystack = [task.title, task.description, task.project, task.module, task.type, ...(task.tags || [])]
             .join(' ')
@@ -972,7 +973,108 @@
       .sort(compareBugs);
   }
 
-  function trimPlainUrlTail(raw) {
+  /* =========================================================
+     Rich text (ZenTao Markdown / HTML)
+     ========================================================= */
+
+  function escapeRichHtml(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[char]));
+  }
+
+  function decodeRichEntities(value) {
+    return String(value == null ? '' : value)
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+
+  function zenTaoFileId(value) {
+    const text = String(value == null ? '' : value).trim();
+    let match = text.match(/^\{(\d{1,12})(?:\.[a-z0-9]{1,10})?\}$/i);
+    if (match) return match[1];
+    match = text.match(/[?&](?:fileID|fileId|fileid)=(\d{1,12})/);
+    if (match) return match[1];
+    match = text.match(/\/api\.php\/v1\/files\/(\d{1,12})/i);
+    if (match) return match[1];
+    return '';
+  }
+
+  function sanitizeRichUrl(value) {
+    const raw = decodeRichEntities(String(value == null ? '' : value)).trim();
+    if (!raw) return '';
+    const fileId = zenTaoFileId(raw);
+    if (fileId) return `/api/zentao/file/${fileId}`;
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(raw)) return raw;
+    if (/^https?:\/\//i.test(raw)) return raw;
+    if (/^mailto:/i.test(raw)) return raw;
+    if (/^\/(?!\/)/.test(raw)) return raw;
+    if (/^#[\w-]+$/.test(raw)) return raw;
+    return '';
+  }
+
+  function normalizeImageSource(value) {
+    const raw = decodeRichEntities(String(value == null ? '' : value)).trim().replace(/^<|>$/g, '');
+    const fileId = zenTaoFileId(raw);
+    if (fileId) return { src: `/api/zentao/file/${fileId}`, fileId, raw };
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(raw)) return { src: raw, fileId: '', raw };
+    return { src: '', fileId: '', raw };
+  }
+
+  function cleanImageAlt(value) {
+    const text = String(value == null ? '' : value).trim();
+    if (!text || /^bug[\s_-]*screenshot$/i.test(text) || text === '截图') return '';
+    return text;
+  }
+
+  function richImageHtml(rawSrc, alt) {
+    const normalized = normalizeImageSource(rawSrc);
+    const label = escapeRichHtml(cleanImageAlt(alt) || '截图');
+    if (normalized.src) {
+      return `<figure class="rich-image"><a href="${escapeRichHtml(normalized.src)}" target="_blank" rel="noopener noreferrer"><img src="${escapeRichHtml(normalized.src)}" alt="${label}" loading="lazy"></a><figcaption>${label}</figcaption></figure>`;
+    }
+    if (/^https?:\/\//i.test(normalized.raw)) {
+      return `<p class="rich-image-link"><a href="${escapeRichHtml(normalized.raw)}" target="_blank" rel="noopener noreferrer">查看图片：${label}</a></p>`;
+    }
+    return `<p class="rich-image-link">${label}（该图片需在禅道中查看）</p>`;
+  }
+
+  function inlineRichText(value) {
+    let text = escapeRichHtml(value);
+    const stash = [];
+    const keep = (html) => {
+      const token = `\u0000${stash.length}\u0000`;
+      stash.push(html);
+      return token;
+    };
+    text = text.replace(/\\([\\`*_{}\[\]()#+\-.!>~|])/g, (_, char) => keep(escapeRichHtml(char)));
+    text = text.replace(/`([^`\n]+)`/g, (_, code) => keep(`<code>${code}</code>`));
+    text = text.replace(/!\[([^\]]*)\]\(([^)\n]+)\)/g, (_, alt, src) => {
+      const clean = src.replace(/\s+&quot;.*?&quot;\s*$/, '').trim();
+      return keep(richImageHtml(clean, alt));
+    });
+    text = text.replace(/\[([^\]]+)\]\(([^)\n]+)\)/g, (_, label, href) => {
+      const url = sanitizeRichUrl(href.replace(/\s+&quot;.*?&quot;\s*$/, '').trim());
+      if (!url) return label;
+      return keep(`<a href="${escapeRichHtml(url)}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+    });
+    text = text.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+    text = text.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+    text = text.replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?，。；：])/g, '$1<em>$2</em>');
+    text = text.replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?，。；：])/g, '$1<em>$2</em>');
+    text = text.replace(/\u0000(\d+)\u0000/g, (_, index) => stash[Number(index)]);
+    return text;
+  }
+
+  function trimUrlTail(raw) {
     let url = String(raw || '');
     let tail = '';
     const trimChars = /[.,;:!?，。；：、"'”’]/;
@@ -992,19 +1094,258 @@
     return { url, tail };
   }
 
-  function linkifyText(value) {
-    const escaped = String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }[char]));
-    return escaped.replace(/(^|[\s（(【>:：])(https?:\/\/(?:[^\s<>"'&]|&amp;)+)/g, (match, prefix, rawUrl) => {
-      const trimmed = trimPlainUrlTail(rawUrl);
-      if (!trimmed.url) return match;
-      return `${prefix}<a href="${trimmed.url}" target="_blank" rel="noopener noreferrer">${trimmed.url}</a>${trimmed.tail}`;
+  function autoLinkBareUrls(html) {
+    let anchorDepth = 0;
+    let skipDepth = 0;
+    return String(html == null ? '' : html).split(/(<[^>]*>)/g).map((part) => {
+      if (!part) return part;
+      if (part.charAt(0) === '<') {
+        if (/^<a\b/i.test(part)) anchorDepth += 1;
+        else if (/^<\/a\s*>/i.test(part)) anchorDepth = Math.max(0, anchorDepth - 1);
+        else if (/^<(?:code|pre)\b/i.test(part)) skipDepth += 1;
+        else if (/^<\/(?:code|pre)\s*>/i.test(part)) skipDepth = Math.max(0, skipDepth - 1);
+        return part;
+      }
+      if (anchorDepth || skipDepth) return part;
+      return part.replace(/(^|[\s（(【>:：])(https?:\/\/[^\s<>"'\u0000]+)/g, (match, prefix, rawUrl) => {
+        const trimmed = trimUrlTail(rawUrl);
+        if (!trimmed.url) return match;
+        return `${prefix}<a href="${trimmed.url}" target="_blank" rel="noopener noreferrer">${trimmed.url}</a>${trimmed.tail}`;
+      });
+    }).join('');
+  }
+
+  function matchListLine(line) {
+    return String(line || '').match(/^(\s*)([-*+]|(\d+)\\?[.)])\s+(.*)$/);
+  }
+
+  function startsMarkdownBlock(line) {
+    return /^\s*(```|#{1,6}\s|>|[-*+]\s+|\d+\\?[.)]\s+|([-*_])(?:\s*\2){2,}\s*$|\|)/.test(line);
+  }
+
+  function splitTableRow(line) {
+    return String(line || '')
+      .trim()
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((cell) => cell.trim());
+  }
+
+  function buildMarkdownList(rows, start, indent) {
+    const ordered = rows[start].ordered;
+    const tag = ordered ? 'ol' : 'ul';
+    let html = `<${tag}>`;
+    let index = start;
+    while (index < rows.length && rows[index].indent >= indent) {
+      if (rows[index].indent > indent) {
+        const nested = buildMarkdownList(rows, index, rows[index].indent);
+        html += nested.html;
+        index = nested.index;
+        continue;
+      }
+      html += `<li>${inlineRichText(rows[index].text.replace(/[ \t]+$/gm, '')).replace(/\n/g, '<br>')}`;
+      index += 1;
+      if (index < rows.length && rows[index].indent > indent) {
+        const nested = buildMarkdownList(rows, index, rows[index].indent);
+        html += nested.html;
+        index = nested.index;
+      }
+      html += '</li>';
+    }
+    return { html: `${html}</${tag}>`, index };
+  }
+
+  function renderMarkdown(value) {
+    const lines = String(value == null ? '' : value).replace(/\r\n?/g, '\n').replace(/\t/g, '  ').split('\n');
+    const output = [];
+    let index = 0;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (!line.trim()) { index += 1; continue; }
+
+      if (/^\s*```/.test(line)) {
+        const fence = line.match(/^\s*```([\w+#.-]*)\s*$/);
+        const language = fence ? fence[1] : '';
+        const buffer = [];
+        index += 1;
+        while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) {
+          buffer.push(lines[index]);
+          index += 1;
+        }
+        if (index < lines.length) index += 1;
+        output.push(`<pre><code${language ? ` class="language-${escapeRichHtml(language)}"` : ''}>${escapeRichHtml(buffer.join('\n'))}</code></pre>`);
+        continue;
+      }
+
+      const heading = line.match(/^(#{1,6})\s+(.*)$/);
+      if (heading) {
+        const level = heading[1].length;
+        output.push(`<h${level}>${inlineRichText(heading[2])}</h${level}>`);
+        index += 1;
+        continue;
+      }
+
+      if (/^\s*([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+        output.push('<hr>');
+        index += 1;
+        continue;
+      }
+
+      if (/^\s*>/.test(line)) {
+        const buffer = [];
+        while (index < lines.length && /^\s*>/.test(lines[index])) {
+          buffer.push(lines[index].replace(/^\s*>\s?/, ''));
+          index += 1;
+        }
+        output.push(`<blockquote>${renderMarkdown(buffer.join('\n'))}</blockquote>`);
+        continue;
+      }
+
+      if (line.includes('|') && index + 1 < lines.length && lines[index + 1].includes('|')) {
+        const header = splitTableRow(line);
+        const divider = splitTableRow(lines[index + 1]);
+        if (header.length && divider.length === header.length && divider.every((cell) => /^:?-{2,}:?$/.test(cell))) {
+          index += 2;
+          const rows = [];
+          while (index < lines.length && lines[index].includes('|') && lines[index].trim()) {
+            rows.push(splitTableRow(lines[index]));
+            index += 1;
+          }
+          output.push(`<div class="rich-table-wrap"><table><thead><tr>${header.map((cell) => `<th>${inlineRichText(cell)}</th>`).join('')}</tr></thead><tbody>${rows.map((row) => `<tr>${header.map((_, cellIndex) => `<td>${inlineRichText(row[cellIndex] || '')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`);
+          continue;
+        }
+      }
+
+      if (matchListLine(line)) {
+        const rows = [];
+        while (index < lines.length) {
+          const item = matchListLine(lines[index]);
+          if (item) {
+            rows.push({
+              indent: item[1].length,
+              ordered: /^\d/.test(item[2]),
+              text: item[4]
+            });
+            index += 1;
+            continue;
+          }
+          if (rows.length && /^\s{2,}\S/.test(lines[index]) && !startsMarkdownBlock(lines[index])) {
+            rows[rows.length - 1].text += `\n${lines[index].trim()}`;
+            index += 1;
+            continue;
+          }
+          break;
+        }
+        output.push(buildMarkdownList(rows, 0, rows[0].indent).html);
+        continue;
+      }
+
+      const paragraph = [line];
+      index += 1;
+      while (index < lines.length && lines[index].trim() && !startsMarkdownBlock(lines[index])) {
+        paragraph.push(lines[index]);
+        index += 1;
+      }
+      const rendered = paragraph.map((item) => inlineRichText(item.replace(/[ \t]+$/, ''))).join('<br>');
+      const onlyImages = /^(?:\s*<figure class="rich-image">[\s\S]*?<\/figure>\s*)+$/.test(rendered);
+      output.push(onlyImages ? rendered : `<p>${rendered}</p>`);
+    }
+    return output.join('\n');
+  }
+
+  function looksLikeHtml(value) {
+    return /<(?:p|div|br|span|img|a|ul|ol|li|h[1-6]|pre|code|blockquote|table|thead|tbody|tr|td|th|strong|b|em|i|u|s|del|figure|figcaption|hr)\b[^>]*>/i.test(String(value || ''));
+  }
+
+  function htmlAttribute(source, name) {
+    const regex = new RegExp('(?:^|\\s)' + name + '\\s*=\\s*(?:"([^"]*)"|\'([^\']*)\'|([^\\s"\'=<>`]+))', 'i');
+    const match = regex.exec(String(source || ''));
+    if (!match) return '';
+    return decodeRichEntities(match[1] != null ? match[1] : match[2] != null ? match[2] : match[3] || '');
+  }
+
+  function sanitizeHtmlFragment(value) {
+    const source = String(value == null ? '' : value)
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/<(script|style|iframe|object|embed|svg|math|link|meta)\b[\s\S]*?<\/\1\s*>/gi, '')
+      .replace(/<(script|style|iframe|object|embed|svg|math|link|meta)\b[^>]*\/?>/gi, '');
+    const allowed = new Set([
+      'p', 'div', 'br', 'span', 'strong', 'b', 'em', 'i', 'u', 's', 'del',
+      'ul', 'ol', 'li', 'blockquote', 'pre', 'code', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'hr', 'a', 'img', 'figure', 'figcaption', 'table', 'thead', 'tbody', 'tr', 'th', 'td'
+    ]);
+    let output = '';
+    let cursor = 0;
+    const tagPattern = /<\/?([a-zA-Z][\w:-]*)((?:\s+[^<>]*)?)\/?>/g;
+    let match;
+    while ((match = tagPattern.exec(source))) {
+      output += escapeRichHtml(source.slice(cursor, match.index));
+      cursor = tagPattern.lastIndex;
+      const name = match[1].toLowerCase();
+      const attrs = match[2] || '';
+      const closing = match[0].startsWith('</');
+      if (!allowed.has(name)) continue;
+      if (closing) {
+        if (name !== 'br' && name !== 'hr' && name !== 'img') output += `</${name}>`;
+        continue;
+      }
+      if (name === 'br') { output += '<br>'; continue; }
+      if (name === 'hr') { output += '<hr>'; continue; }
+      if (name === 'img') {
+        const src = htmlAttribute(attrs, 'src');
+        const alt = htmlAttribute(attrs, 'alt');
+        const image = normalizeImageSource(src);
+        if (image.src) {
+          const label = escapeRichHtml(cleanImageAlt(alt) || '截图');
+          output += `<figure class="rich-image"><a href="${escapeRichHtml(image.src)}" target="_blank" rel="noopener noreferrer"><img src="${escapeRichHtml(image.src)}" alt="${label}" loading="lazy"></a><figcaption>${label}</figcaption></figure>`;
+        }
+        continue;
+      }
+      if (name === 'a') {
+        const href = sanitizeRichUrl(htmlAttribute(attrs, 'href'));
+        const title = htmlAttribute(attrs, 'title');
+        output += `<a${href ? ` href="${escapeRichHtml(href)}" target="_blank" rel="noopener noreferrer"` : ''}${title ? ` title="${escapeRichHtml(title)}"` : ''}>`;
+        continue;
+      }
+      output += `<${name}>`;
+    }
+    output += escapeRichHtml(source.slice(cursor));
+    return output;
+  }
+
+  function renderRichText(value) {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    let body = looksLikeHtml(text) ? sanitizeHtmlFragment(text) : renderMarkdown(text);
+    body = autoLinkBareUrls(body);
+    body = body.replace(/<p>((?:\s*<figure class="rich-image">[\s\S]*?<\/figure>\s*)+)<\/p>/g, '$1');
+    return `<div class="rich-text">${body}</div>`;
+  }
+
+  function extractAttachments(values) {
+    const source = Array.isArray(values) ? values.join('\n') : String(values == null ? '' : values);
+    const seen = new Set();
+    const attachments = [];
+    const add = (id, alt) => {
+      const key = String(id || '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      attachments.push({ id: key, fileId: key, alt: cleanImageAlt(alt), url: `/api/zentao/file/${key}` });
+    };
+    source.replace(/!\[([^\]]*)\]\(([^)\n]+)\)/g, (_, alt, src) => {
+      add(zenTaoFileId(src), alt);
+      return '';
     });
+    source.replace(/[?&](?:fileID|fileId|fileid)=(\d{1,12})/g, (_, id) => {
+      add(id, '');
+      return '';
+    });
+    source.replace(/\{(\d{1,12})\.(?:png|jpe?g|gif|webp|bmp)\}/gi, (_, id) => {
+      add(id, '');
+      return '';
+    });
+    return attachments;
   }
 
   return {
@@ -1042,6 +1383,8 @@
     filterTasks,
     filterBugs,
     uniqueBy,
-    linkifyText
+    renderRichText,
+    extractAttachments,
+    zenTaoFileId
   };
 });

@@ -131,12 +131,33 @@
 
   async function apiRequest(path, options) {
     const opts = options || {};
-    const response = await fetch(path, {
-      method: opts.method || 'GET',
-      headers: Object.assign({ Accept: 'application/json' }, opts.body ? { 'Content-Type': 'application/json' } : {}),
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-      cache: 'no-store'
-    });
+    const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 60000;
+    let response;
+    let timeoutTimer = null;
+    try {
+      let signal;
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        signal = AbortSignal.timeout(timeoutMs);
+      } else {
+        const controller = new AbortController();
+        timeoutTimer = setTimeout(() => controller.abort(), timeoutMs);
+        signal = controller.signal;
+      }
+      response = await fetch(path, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ Accept: 'application/json' }, opts.body ? { 'Content-Type': 'application/json' } : {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        cache: 'no-store',
+        signal
+      });
+    } catch (error) {
+      if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+        throw new Error(`本地服务响应超时（${Math.round(timeoutMs / 1000)} 秒），请稍后重试。`);
+      }
+      throw error;
+    } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
+    }
     let payload = null;
     try {
       payload = await response.json();
@@ -204,6 +225,8 @@
     if (!ui) {
       ui = {
         view: syncFromHash(),
+        bugDetailId: parseHash().bugId,
+        bugEditing: parseHash().bugEditing,
         taskView: 'board',
         taskScope: 'mine',
         bugScope: 'opened',
@@ -499,6 +522,16 @@
 
   function pageMeta(view) {
     const m = Core.metrics(state);
+    if (view === 'bugs' && ui && ui.bugDetailId) {
+      const bug = bugById(ui.bugDetailId);
+      if (bug) {
+        return {
+          eyebrow: ui.bugEditing ? 'ZENTAO / BUG EDIT' : 'ZENTAO / BUG DETAIL',
+          title: ui.bugEditing ? `编辑 Bug ${bug.displayId || '#' + bug.id}` : `Bug ${bug.displayId || '#' + bug.id}`,
+          subtitle: `${bug.title} · ${bug.project || '未归属产品'} · ${bug.statusLabel}`
+        };
+      }
+    }
     switch (view) {
       case 'tasks':
         return {
@@ -592,6 +625,8 @@
     closeSidebar();
     if (!VIEWS.includes(view)) view = 'dashboard';
     ui.view = view;
+    ui.bugDetailId = null;
+    ui.bugEditing = false;
     const nextHash = `#/${view}`;
     if (window.location.hash !== nextHash) {
       window.location.hash = nextHash;
@@ -600,9 +635,17 @@
     window.scrollTo({ top: 0, behavior: 'auto' });
   }
 
+  function parseHash() {
+    const raw = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0];
+    const parts = raw.split('/');
+    const view = VIEWS.includes(parts[0]) ? parts[0] : 'dashboard';
+    const bugId = view === 'bugs' && /^\d{1,12}$/.test(parts[1] || '') ? parts[1] : null;
+    const bugEditing = Boolean(bugId) && parts[2] === 'edit';
+    return { view, bugId, bugEditing };
+  }
+
   function syncFromHash() {
-    const value = (window.location.hash || '').replace(/^#\/?/, '').split('?')[0];
-    return VIEWS.includes(value) ? value : 'dashboard';
+    return parseHash().view;
   }
 
   /* =========================================================
@@ -1282,6 +1325,12 @@
   }
 
   function renderBugs() {
+    if (ui.bugDetailId) {
+      const bug = bugById(ui.bugDetailId);
+      if (bug) return ui.bugEditing ? renderBugEditPage(bug) : renderBugPage(bug);
+      ui.bugDetailId = null;
+      ui.bugEditing = false;
+    }
     const stats = scopedBugStats();
     const f = ui.bugFilters;
     return `
@@ -1325,6 +1374,540 @@
       ${bugClassificationPanel()}
       <div class="result-meta" id="bug-result-count">${bugCountLabel()}</div>
       <div id="bug-results">${bugResultsHtml()}</div>`;
+  }
+
+  /* =========================================================
+     Bug detail page
+     ========================================================= */
+
+  function bugDetailFact(label, valueHtml) {
+    return `<div class="bug-detail-fact"><dt>${esc(label)}</dt><dd>${valueHtml || '—'}</dd></div>`;
+  }
+
+  function renderBugAttachments(bug) {
+    const attachments = Core.extractAttachments([bug.steps, bug.expected, bug.actual]);
+    if (!attachments.length) return '';
+    return `<section class="bug-detail-section">
+      <div class="bug-detail-section-head">
+        <h2>附件截图</h2>
+        <span class="bug-detail-section-count">${attachments.length}</span>
+      </div>
+      <div class="bug-attachment-grid">
+        ${attachments.map((item, index) => `
+          <a class="bug-attachment" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="${esc(item.alt || '附件 ' + item.id)}">
+            <span class="bug-attachment-preview"><img src="${esc(item.url)}" alt="${esc(item.alt || '附件 ' + (index + 1))}" loading="lazy"></span>
+            <span class="bug-attachment-copy">
+              <strong>${esc(item.alt || `截图 ${index + 1}`)}</strong>
+              <small>FILE-${esc(item.id)} · 点击查看原图</small>
+            </span>
+          </a>`).join('')}
+      </div>
+    </section>`;
+  }
+
+  function stepsWithoutResults(bug) {
+    let text = String(bug.steps || '');
+    [bug.expected, bug.actual].filter(Boolean).forEach((value) => {
+      const index = text.indexOf(value);
+      if (index >= 0) text = `${text.slice(0, index)}${text.slice(index + value.length)}`;
+    });
+    return text
+      .replace(/^\s*\*\*(?:期望|预期结果|预期|实际结果|实际)\*\*\s*[：:]?\s*$/gm, '')
+      .replace(/^\s*(?:期望|预期结果|预期|实际结果|实际)\s*[：:]\s*$/gm, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function renderBugPage(bug) {
+    const task = bug.taskId ? taskById(bug.taskId) : null;
+    const stepSource = stepsWithoutResults(bug);
+    const steps = Core.renderRichText(stepSource || '禅道中没有填写复现步骤。');
+    const expected = bug.expected ? Core.renderRichText(bug.expected) : '';
+    const actual = bug.actual ? Core.renderRichText(bug.actual) : '';
+    return `<div class="bug-detail-page">
+      <div class="bug-detail-topbar">
+        <button class="bug-detail-back" type="button" data-action="close-bug-page">
+          ${icon('chevron-left')}<span>返回 Bug 列表</span>
+        </button>
+        <div class="bug-detail-topbar-actions">
+          <span class="bug-detail-number">${esc(bug.displayId || '#' + bug.id)}</span>
+          ${bug.url ? `<a class="btn btn-sm" href="${esc(bug.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
+          <button class="btn btn-sm btn-primary" type="button" data-action="edit-bug-page" data-id="${esc(bug.id)}">${icon('edit')}编辑 Bug</button>
+        </div>
+      </div>
+
+      <article class="bug-detail-doc">
+        <header class="bug-detail-head">
+          <div class="bug-detail-kicker">${icon('bug')}ZENTAO BUG · ${esc(bug.project || '未归属产品')} · ${esc(bug.module || '未指定模块')}</div>
+          <h1>${esc(bug.title)}</h1>
+          <div class="bug-detail-badges">
+            ${severityBadge(bug.severity)}
+            ${bugStatusPill(bug.status, bug)}
+            <span class="role-badge">${esc(bug.typeLabel || 'Bug')}</span>
+            ${bug.resolutionLabel ? `<span class="bug-detail-resolution">${icon('check-circle')}${esc(bug.resolutionLabel)}</span>` : ''}
+          </div>
+          <div class="bug-detail-byline">
+            <span>报告人 <strong>${esc(bug.reporter || '—')}</strong></span>
+            <span>负责人 <strong>${esc(bug.assignee || '未指派')}</strong></span>
+            <span>创建于 <strong>${esc(fmtFullDate(bug.createdAt))}</strong></span>
+            <span>更新于 <strong>${esc(fmtFullDate(bug.updatedAt))}</strong></span>
+          </div>
+        </header>
+
+        <div class="bug-detail-grid">
+          <div class="bug-detail-main">
+            <section class="bug-detail-section">
+              <div class="bug-detail-section-head"><h2>复现步骤</h2></div>
+              ${steps}
+            </section>
+
+            ${(expected || actual) ? `<section class="bug-detail-section">
+              <div class="bug-detail-section-head"><h2>预期结果与实际结果</h2></div>
+              <div class="bug-result-pair">
+                <div class="bug-result-card expected">
+                  <span class="bug-result-label">${icon('check-circle')}预期结果</span>
+                  ${expected || '<p class="muted">未填写</p>'}
+                </div>
+                <div class="bug-result-card actual">
+                  <span class="bug-result-label">${icon('alert-triangle')}实际结果</span>
+                  ${actual || '<p class="muted">未填写</p>'}
+                </div>
+              </div>
+            </section>` : ''}
+
+            ${renderBugAttachments(bug)}
+
+            <section class="bug-detail-section">
+              <div class="bug-detail-section-head"><h2>处理记录</h2></div>
+              ${timelineHtml(bug.history)}
+            </section>
+
+            <div class="bug-detail-actions">
+              ${bugActionButtons(bug)}
+            </div>
+
+            <div class="readonly-note">${icon('shield')}<span>编辑、指派、解决、关闭、激活和删除都会通过禅道 CLI 写入正式 Bug，写入后自动重新同步。</span></div>
+          </div>
+
+          <aside class="bug-detail-side">
+            <section class="bug-detail-card">
+              <div class="bug-detail-card-head"><h2>Bug 信息</h2></div>
+              <dl class="bug-detail-facts">
+                ${bugDetailFact('Bug 编号', esc(bug.displayId || '#' + bug.id))}
+                ${bugDetailFact('所属产品', esc(bug.project || '未归属产品'))}
+                ${bugDetailFact('所属模块', esc(bug.module || '未指定'))}
+                ${bugDetailFact('功能模块', esc(bug.feature || '—'))}
+                ${bug.isAutojob ? bugDetailFact('来源', '<span class="source-badge">AI客服提取</span><span class="bug-detail-fact-text">客服群聊记录</span>') : ''}
+                ${bugDetailFact('严重程度', `${severityBadge(bug.severity)}<span class="bug-detail-fact-text">${esc(bug.severityLabel || bug.severity)}</span>`)}
+                ${bugDetailFact('优先级', `${priorityDot(bug.pri)}<span class="bug-detail-fact-text">${esc(bug.pri || '—')}</span>`)}
+                ${bugDetailFact('Bug 类型', esc(bug.typeLabel || '—'))}
+                ${bugDetailFact('当前状态', bugStatusPill(bug.status, bug))}
+                ${bugDetailFact('解决方案', esc(bug.resolutionLabel || '未解决'))}
+                ${bugDetailFact('影响版本', esc(bug.version || '未填写'))}
+                ${bugDetailFact('运行环境', esc(bug.environment || '—'))}
+                ${bugDetailFact('报告人', esc(bug.reporter || '—'))}
+                ${bugDetailFact('负责人', esc(bug.assignee || '未指派'))}
+                ${bugDetailFact('创建时间', esc(fmtFullDate(bug.createdAt)))}
+                ${bugDetailFact('更新时间', esc(fmtFullDate(bug.updatedAt)))}
+                ${bug.deadline ? bugDetailFact('截止日期', esc(dateInputValue(bug.deadline))) : ''}
+                ${bug.resolvedAt ? bugDetailFact('解决时间', esc(fmtFullDate(bug.resolvedAt))) : ''}
+              </dl>
+            </section>
+
+            ${task ? `<section class="bug-detail-card">
+              <div class="bug-detail-card-head"><h2>关联任务</h2></div>
+              <button class="linked-item" type="button" data-action="open-task" data-id="${esc(task.id)}">
+                ${icon('tasks')}
+                <span style="min-width:0;flex:1"><span class="linked-id">${esc(task.displayId || '#' + task.id)}</span><strong>${esc(task.title)}</strong></span>
+                ${taskStatusPill(task.status)}
+              </button>
+            </section>` : ''}
+          </aside>
+        </div>
+      </article>
+    </div>`;
+  }
+
+  /* =========================================================
+     Bug editing and ZenTao actions
+     ========================================================= */
+
+  function serverVersionAtLeast(minVersion) {
+    const current = state && state.zentao ? String(state.zentao.serverVersion || '') : '';
+    const currentMatch = current.match(/(\d+)\.(\d+)/);
+    const minMatch = String(minVersion || '').match(/(\d+)\.(\d+)/);
+    if (!currentMatch || !minMatch) return false;
+    const currentMajor = Number(currentMatch[1]);
+    const currentMinor = Number(currentMatch[2]);
+    const minMajor = Number(minMatch[1]);
+    const minMinor = Number(minMatch[2]);
+    return currentMajor > minMajor || (currentMajor === minMajor && currentMinor >= minMinor);
+  }
+
+  function bugCanConfirm() {
+    return serverVersionAtLeast('22.5');
+  }
+
+  function bugBuildValue(value) {
+    const text = String(value || '').trim();
+    if (!text || text === '主干' || text === 'trunk') return 'trunk';
+    return text;
+  }
+
+  function dateInputValue(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  function bugUserOptions(selected) {
+    const users = state.creation && Array.isArray(state.creation.users) ? state.creation.users.slice() : [];
+    const current = String(selected || '');
+    if (current && !users.some((user) => String(user.account) === current)) {
+      users.unshift({ account: current, name: current });
+    }
+    users.sort((a, b) => String(a.name || a.account).localeCompare(String(b.name || b.account), 'zh-CN'));
+    return `<option value="">不指派</option>${users.map((user) => {
+      const account = String(user.account || '');
+      const label = user.name && user.name !== account ? `${user.name}（${account}）` : account;
+      return `<option value="${esc(account)}"${account === current ? ' selected' : ''}>${esc(label)}</option>`;
+    }).join('')}`;
+  }
+
+  function bugActionMeta(action) {
+    const meta = {
+      assign: { label: '指派', icon: 'user', title: '指派 Bug', description: '把 Bug 指派给禅道账号中的负责人。', submit: '确认指派' },
+      resolve: { label: '解决', icon: 'check-circle', title: '解决 Bug', description: '填写解决方案与解决版本，Bug 将进入已解决状态，等待提交人验证。', submit: '解决并同步' },
+      close: { label: '关闭', icon: 'check', title: '关闭 Bug', description: '关闭后 Bug 不再出现在未关闭列表，可随时重新激活。', submit: '关闭并同步' },
+      activate: { label: '激活', icon: 'refresh', title: '重新激活 Bug', description: '把已解决或已关闭的 Bug 重新置为激活状态。', submit: '激活并同步' },
+      confirm: { label: '确认', icon: 'shield', title: '确认 Bug', description: '确认 Bug 有效，可同时调整类型、优先级和截止日期。', submit: '确认并同步' },
+      delete: { label: '删除', icon: 'trash', title: '删除 Bug', description: '删除后无法在 QDesk 中恢复，请确认这是正式删除操作。', submit: '删除 Bug' }
+    };
+    return meta[action] || null;
+  }
+
+  function bugActionsFor(bug) {
+    const status = String(bug.rawStatus || 'active');
+    const actions = [];
+    if (bugCanConfirm() && status === 'active' && !bug.confirmed) actions.push('confirm');
+    actions.push('assign');
+    if (status === 'active') actions.push('resolve');
+    if (status !== 'closed') actions.push('close');
+    if (status === 'resolved' || status === 'closed') actions.push('activate');
+    return actions;
+  }
+
+  function bugActionButtons(bug) {
+    const actions = bugActionsFor(bug);
+    return `<div class="bug-action-buttons">
+      ${actions.map((action) => {
+        const meta = bugActionMeta(action);
+        if (!meta) return '';
+        return `<button class="btn btn-sm" type="button" data-action="bug-action" data-bug-action="${action}" data-id="${esc(bug.id)}">${icon(meta.icon)}${esc(meta.label)}</button>`;
+      }).join('')}
+      <button class="btn btn-sm btn-danger-ghost" type="button" data-action="bug-action" data-bug-action="delete" data-id="${esc(bug.id)}">${icon('trash')}删除</button>
+    </div>`;
+  }
+
+  function renderBugEditPage(bug) {
+    const statusNote = String(bug.rawStatus || 'active') === 'closed'
+      ? '当前 Bug 已关闭，保存基本信息后仍保持关闭状态；如需继续处理，请先使用「激活」。'
+      : '保存后会通过禅道 CLI 更新正式 Bug，并自动从禅道重新同步。';
+    return `<div class="bug-detail-page bug-edit-page">
+      <div class="bug-detail-topbar">
+        <button class="bug-detail-back" type="button" data-action="close-bug-edit" data-id="${esc(bug.id)}">
+          ${icon('chevron-left')}<span>返回 Bug 详情</span>
+        </button>
+        <div class="bug-detail-topbar-actions">
+          <span class="bug-detail-number">${esc(bug.displayId || '#' + bug.id)}</span>
+          ${bug.url ? `<a class="btn btn-sm" href="${esc(bug.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
+        </div>
+      </div>
+
+      <form class="bug-edit-form" data-form="bug-edit" data-id="${esc(bug.id)}" novalidate>
+        <article class="bug-detail-doc">
+          <header class="bug-detail-head">
+            <div class="bug-detail-kicker">${icon('edit')}EDIT BUG · ${esc(bug.project || '未归属产品')} · ${esc(bug.module || '未指定模块')}</div>
+            <h1>${esc(bug.title)}</h1>
+            <div class="bug-detail-badges">
+              ${severityBadge(bug.severity)}
+              ${bugStatusPill(bug.status, bug)}
+              <span class="role-badge">${esc(bug.typeLabel || 'Bug')}</span>
+            </div>
+            <div class="bug-detail-byline">
+              <span>报告人 <strong>${esc(bug.reporter || '—')}</strong></span>
+              <span>负责人 <strong>${esc(bug.assignee || '未指派')}</strong></span>
+              <span>创建于 <strong>${esc(fmtFullDate(bug.createdAt))}</strong></span>
+              <span>更新于 <strong>${esc(fmtFullDate(bug.updatedAt))}</strong></span>
+            </div>
+          </header>
+
+          <div class="bug-detail-grid">
+            <div class="bug-detail-main">
+              <section class="bug-detail-section">
+                <div class="bug-detail-section-head"><h2>编辑 Bug 字段</h2></div>
+                <div class="form-grid">
+                  ${field('Bug 标题', `<input name="title" value="${esc(bug.title)}" maxlength="180" placeholder="一句话说明问题" autofocus required>`, { full: true, required: true })}
+                  ${field('严重程度', `<select name="severity" required>${bugSeverityOptions(bug.severity)}</select>`, { required: true })}
+                  ${field('优先级', `<select name="pri" required>${bugPriorityOptions(bug.pri)}</select>`, { required: true })}
+                  ${field('Bug 类型', `<select name="type" required>${bugTypeOptions(bug.type)}</select>`, { required: true })}
+                  ${field('指派给', `<select name="assignedTo">${bugUserOptions(bug.assigneeAccount)}</select>`)}
+                  ${field('影响版本', `<input name="openedBuild" value="${esc(bugBuildValue(bug.version))}" maxlength="120" placeholder="trunk">`, { hint: '主干填写 trunk，否则填写禅道版本 ID。' })}
+                  ${field('所属项目', `<select name="project">${bugProjectOptions(bug.projectId)}</select>`, { hint: '留空或选择“不关联项目”即产品级 Bug。' })}
+                  ${field('所属执行', `<select name="execution">${bugExecutionOptions(bug.executionId)}</select>`, { hint: '可选；对应禅道迭代或执行。' })}
+                  ${field('相关需求', `<input name="story" type="number" min="0" step="1" value="${esc(bug.storyId || '')}" placeholder="需求 ID，留空表示不关联">`, { hint: '填写禅道需求 ID，留空表示不关联。' })}
+                  ${field('复现步骤', `<textarea name="steps" class="bug-edit-steps" placeholder="1. 打开…&#10;2. 操作…&#10;3. 观察…">${esc(bug.steps || '')}</textarea>`, { full: true, hint: '支持禅道 Markdown 与 HTML；保存后会原样写入禅道。' })}
+                </div>
+                <div class="form-error" role="alert"></div>
+                <div class="bug-edit-note">${icon('alert-triangle')}<span>${esc(statusNote)}</span></div>
+                <div class="bug-edit-readonly">${icon('layers')}<span>所属产品、所属模块由禅道同步维护；当前禅道 22.4 的 CLI 更新接口不支持修改这两项，请到禅道处理。解决方案、状态等请使用右侧操作按钮。</span></div>
+                <div class="bug-edit-footer">
+                  <button class="btn" type="button" data-action="close-bug-edit" data-id="${esc(bug.id)}">取消</button>
+                  <button class="btn btn-primary" type="submit">${icon('check')}保存并同步到禅道</button>
+                </div>
+              </section>
+            </div>
+
+            <aside class="bug-detail-side">
+              <section class="bug-detail-card">
+                <div class="bug-detail-card-head"><h2>Bug 操作</h2></div>
+                <div class="bug-action-panel">
+                  <p>状态流转与指派都会写入正式 Bug。</p>
+                  ${bugActionButtons(bug)}
+                </div>
+              </section>
+
+              <section class="bug-detail-card">
+                <div class="bug-detail-card-head"><h2>只读信息</h2></div>
+                <dl class="bug-detail-facts">
+                  ${bugDetailFact('Bug 编号', esc(bug.displayId || '#' + bug.id))}
+                  ${bugDetailFact('所属产品', esc(bug.project || '未归属产品'))}
+                  ${bugDetailFact('所属模块', esc(bug.module || '未指定'))}
+                  ${bugDetailFact('当前状态', bugStatusPill(bug.status, bug))}
+                  ${bugDetailFact('解决方案', esc(bug.resolutionLabel || '未解决'))}
+                  ${bugDetailFact('报告人', esc(bug.reporter || '—'))}
+                  ${bugDetailFact('创建时间', esc(fmtFullDate(bug.createdAt)))}
+                </dl>
+              </section>
+            </aside>
+          </div>
+        </article>
+      </form>
+    </div>`;
+  }
+
+  function bugActionFormHtml(action, bug) {
+    if (action === 'assign') {
+      return field('指派给', `<select name="assignedTo" required>${bugUserOptions(bug.assigneeAccount)}</select>`, { required: true, hint: '只能指派给禅道中的有效账号。' });
+    }
+    if (action === 'resolve') {
+      return `
+        ${field('解决方案', `<select name="resolution" required>
+          <option value="fixed">已修复</option>
+          <option value="notrepro">无法重现</option>
+          <option value="bydesign">设计如此</option>
+          <option value="duplicate">重复 Bug</option>
+          <option value="external">外部原因</option>
+          <option value="postponed">延期处理</option>
+          <option value="willnotfix">不予解决</option>
+          <option value="tostory">转为需求</option>
+        </select>`, { required: true })}
+        ${field('解决版本', `<input name="resolvedBuild" value="${esc(bugBuildValue(bug.version))}" maxlength="120" placeholder="trunk">`)}
+        ${field('指派给', `<select name="assignedTo">${bugUserOptions(bug.assigneeAccount)}</select>`)}
+        ${field('备注', `<textarea name="comment" maxlength="4000" placeholder="可选，说明解决方式或验证建议"></textarea>`, { full: true })}`;
+    }
+    if (action === 'close') {
+      return field('关闭备注', `<textarea name="comment" maxlength="4000" placeholder="可选，说明关闭原因"></textarea>`, { full: true });
+    }
+    if (action === 'activate') {
+      return `
+        ${field('影响版本', `<input name="openedBuild" value="${esc(bugBuildValue(bug.version))}" maxlength="120" placeholder="trunk">`, { hint: '重新激活后使用的影响版本。' })}
+        ${field('指派给', `<select name="assignedTo">${bugUserOptions(bug.assigneeAccount)}</select>`)}
+        ${field('备注', `<textarea name="comment" maxlength="4000" placeholder="可选，说明重新打开的原因"></textarea>`, { full: true })}`;
+    }
+    if (action === 'confirm') {
+      return `
+        ${field('指派给', `<select name="assignedTo">${bugUserOptions(bug.assigneeAccount)}</select>`)}
+        ${field('Bug 类型', `<select name="type">${bugTypeOptions(bug.type)}</select>`)}
+        ${field('优先级', `<select name="pri">${bugPriorityOptions(bug.pri)}</select>`)}
+        ${field('截止日期', `<input name="deadline" type="date" value="${esc(dateInputValue(bug.deadline))}">`)}
+        ${field('备注', `<textarea name="comment" maxlength="4000" placeholder="可选，说明确认结论"></textarea>`, { full: true })}`;
+    }
+    return '';
+  }
+
+  function openBugActionModal(action, bugId) {
+    if (!guardReady()) return;
+    const meta = bugActionMeta(action);
+    const bug = bugById(String(bugId));
+    if (!meta || !bug) return;
+    closeQuickMenu();
+    closeNotifications();
+    const isDelete = action === 'delete';
+    const html = `<div class="overlay">
+      <form class="modal modal-form bug-action-modal" data-bug-form="action" data-bug-action="${esc(action)}" data-id="${esc(bug.id)}" novalidate>
+        <div class="modal-head">
+          <div class="modal-title-wrap"><h2>${esc(meta.title)}</h2><p>${esc(meta.description)}</p></div>
+          <button class="icon-btn modal-close" type="button" data-action="close-modal" aria-label="关闭">${icon('close')}</button>
+        </div>
+        <div class="modal-body">
+          <div class="bug-action-summary">
+            <span class="bug-action-summary-id">${esc(bug.displayId || '#' + bug.id)}</span>
+            <div><strong>${esc(bug.title)}</strong><small>${esc(bug.project || '未归属产品')} · ${esc(bug.statusLabel || '')}</small></div>
+            ${bugStatusPill(bug.status, bug)}
+          </div>
+          ${isDelete
+            ? `<div class="bug-delete-warning">${icon('alert-triangle')}<div><strong>确认删除这个 Bug？</strong><span>删除会通过禅道 CLI 立即执行，禅道中删除后无法在 QDesk 恢复。</span></div></div>`
+            : `<div class="form-grid">${bugActionFormHtml(action, bug)}</div>`}
+          <div class="form-error" role="alert"></div>
+        </div>
+        <div class="modal-footer">
+          <span class="footer-left">操作会写入 ${esc(bug.displayId || '#' + bug.id)}</span>
+          <button class="btn" type="button" data-action="close-modal">取消</button>
+          <button class="btn ${isDelete ? 'btn-danger' : 'btn-primary'}" type="submit">${icon(isDelete ? 'trash' : 'check')}${esc(meta.submit)}</button>
+        </div>
+      </form>
+    </div>`;
+    mountModal(html);
+  }
+
+  function openBugAction(action, bugId) {
+    if (action === 'edit') {
+      openBugEdit(bugId);
+      return;
+    }
+    if (!bugActionMeta(action)) return;
+    openBugActionModal(action, bugId);
+  }
+
+  function openBugEdit(bugId) {
+    if (!guardReady()) return;
+    const bug = bugById(String(bugId));
+    if (!bug) return;
+    closeQuickMenu();
+    closeNotifications();
+    closeDrawer();
+    closeModal({ restoreFocus: false });
+    ui.view = 'bugs';
+    ui.bugDetailId = String(bug.id);
+    ui.bugEditing = true;
+    const nextHash = `#/bugs/${encodeURIComponent(bug.id)}/edit`;
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    } else {
+      renderView(true);
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }
+
+  function closeBugEdit() {
+    const id = ui.bugDetailId;
+    ui.bugEditing = false;
+    const nextHash = id ? `#/bugs/${encodeURIComponent(id)}` : '#/bugs';
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    } else {
+      renderView(true);
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }
+
+  async function saveBugEdit(form) {
+    if (form.dataset.busy === '1') return;
+    if (!form.reportValidity()) return;
+    const bugId = form.dataset.id;
+    const data = new FormData(form);
+    const payload = {
+      title: String(data.get('title') || '').trim(),
+      severity: String(data.get('severity') || ''),
+      pri: String(data.get('pri') || ''),
+      type: String(data.get('type') || ''),
+      openedBuild: String(data.get('openedBuild') || '').trim(),
+      project: String(data.get('project') || ''),
+      execution: String(data.get('execution') || ''),
+      story: String(data.get('story') || ''),
+      assignedTo: String(data.get('assignedTo') || ''),
+      steps: String(data.get('steps') || '')
+    };
+    if (!payload.title) {
+      showFormError(form, '请填写 Bug 标题。');
+      return;
+    }
+    form.dataset.busy = '1';
+    const submit = $('button[type="submit"]', form);
+    if (submit) { submit.disabled = true; submit.classList.add('is-busy'); }
+    try {
+      const result = await apiRequest(`/api/bugs/${encodeURIComponent(bugId)}`, {
+        method: 'PUT',
+        body: payload,
+        timeoutMs: 120000
+      });
+      closeModal({ restoreFocus: false });
+      showToast((result && result.message) || `Bug #${bugId} 已更新，正在重新同步。`, 'success');
+      ui.bugEditing = false;
+      const nextHash = `#/bugs/${encodeURIComponent(bugId)}`;
+      if (window.location.hash !== nextHash) {
+        window.location.hash = nextHash;
+      } else {
+        renderView(true);
+        window.scrollTo({ top: 0, behavior: 'auto' });
+      }
+      schedulePolling(result && result.incremental ? 150 : 800);
+    } catch (error) {
+      showFormError(form, error.message);
+      form.dataset.busy = '';
+      if (submit) { submit.disabled = false; submit.classList.remove('is-busy'); }
+    }
+  }
+
+  async function submitBugAction(form) {
+    if (form.dataset.busy === '1') return;
+    if (!form.reportValidity()) return;
+    const action = form.dataset.bugAction;
+    const bugId = form.dataset.id;
+    const data = new FormData(form);
+    const payload = {};
+    ['assignedTo', 'resolution', 'resolvedBuild', 'openedBuild', 'comment', 'type', 'pri', 'deadline'].forEach((key) => {
+      if (data.has(key)) payload[key] = String(data.get(key) || '');
+    });
+    if (action === 'assign' && !payload.assignedTo) {
+      showFormError(form, '请选择要指派的禅道账号。');
+      return;
+    }
+    form.dataset.busy = '1';
+    const submit = $('button[type="submit"]', form);
+    if (submit) { submit.disabled = true; submit.classList.add('is-busy'); }
+    const endpoint = action === 'assign'
+      ? `/api/bugs/${encodeURIComponent(bugId)}/assign`
+      : `/api/bugs/${encodeURIComponent(bugId)}/${action}`;
+    try {
+      const result = await apiRequest(endpoint, {
+        method: 'POST',
+        body: payload,
+        timeoutMs: 120000
+      });
+      closeModal({ restoreFocus: false });
+      showToast((result && result.message) || '操作已提交，正在重新同步。', 'success');
+      if (action === 'delete') {
+        ui.bugDetailId = null;
+        ui.bugEditing = false;
+        const nextHash = '#/bugs';
+        if (window.location.hash !== nextHash) window.location.hash = nextHash;
+        else renderView(true);
+      } else {
+        ui.bugEditing = false;
+        const nextHash = `#/bugs/${encodeURIComponent(bugId)}`;
+        if (window.location.hash !== nextHash) window.location.hash = nextHash;
+        else renderView(true);
+      }
+      schedulePolling(result && result.incremental ? 150 : 800);
+    } catch (error) {
+      showFormError(form, error.message);
+      form.dataset.busy = '';
+      if (submit) { submit.disabled = false; submit.classList.remove('is-busy'); }
+    }
   }
 
   /* =========================================================
@@ -1617,7 +2200,9 @@
           <div><span>服务器</span><strong class="fact-url">${esc(conn.url || z.server || '—')}</strong></div>
           <div><span>产品范围</span><strong>${products.length} 个产品${products.length ? ` · 主产品 ${esc(product.name || '')}` : ''}</strong></div>
           <div><span>项目范围</span><strong>${projects.length} 个项目</strong></div>
-          <div><span>同步方式</span><strong>后台静默 · ${z.cacheSeconds || 300} 秒周期</strong></div>
+          <div><span>客服反馈源</span><strong>${z.autojob && z.autojob.enabled ? `${(z.autojob.accounts || []).join(', ')} · ${z.autojob.scannedProducts || 0} 个产品` : '未启用'}</strong></div>
+          <div><span>同步方式</span><strong>每天 ${(syncState.schedule || ['08:30', '12:00', '17:00']).join(' / ')} 自动全量 · 其余时间手动或单条更新</strong></div>
+          <div><span>下次自动同步</span><strong>${esc(syncState.nextSyncAt ? fmtFullDate(syncState.nextSyncAt) : '—')}</strong></div>
           <div><span>最近同步</span><strong>${esc(fmtFullDate(sync.lastSyncAt))}</strong></div>
           <div><span>读取耗时</span><strong>${sync.durationMs ? `${(sync.durationMs / 1000).toFixed(1)} 秒` : '—'}</strong></div>
         </div>
@@ -1640,6 +2225,7 @@
           <div class="data-stat"><span>项目</span><strong>${projects.length}</strong></div>
           <div class="data-stat"><span>我的任务</span><strong>${counts.tasks.mine || 0}</strong></div>
           <div class="data-stat"><span>账号 Bug</span><strong>${counts.bugs.all || 0}</strong></div>
+          <div class="data-stat"><span>客服反馈</span><strong>${counts.bugs.autojob || 0}</strong></div>
         </div>
         <div class="data-action-row">
           <button class="btn" type="button" data-action="export-json">${icon('download')}导出完整快照</button>
@@ -1670,7 +2256,7 @@
         </div>
         <div class="boundary-grid">
           <div><strong>任务</strong><p>只读。状态、负责人、截止日期均以禅道为准；需要变更请到禅道处理。</p></div>
-          <div><strong>Bug</strong><p>支持登记新 Bug，可在表单中选择当前账号有权访问的产品。已有 Bug 只读，状态流转请在禅道完成。</p></div>
+          <div><strong>Bug</strong><p>支持登记新 Bug，也可编辑已有 Bug 并执行指派、解决、关闭、激活和删除；所有写入均通过禅道 CLI 完成。</p></div>
           <div><strong>日报</strong><p>仅保存在本地服务，不会回写禅道，也不会自动发送给团队。</p></div>
         </div>
       </section>
@@ -1726,13 +2312,35 @@
     renderDrawer();
   }
 
-  function openBugDrawer(id) {
+  function openBugPage(id) {
     if (!guardReady()) return;
+    const bug = bugById(String(id));
+    if (!bug) return;
     closeQuickMenu();
     closeNotifications();
-    ui.drawer = { type: 'bug', id };
-    $('#drawer-root').dataset.focused = '';
-    renderDrawer();
+    closeDrawer();
+    ui.view = 'bugs';
+    ui.bugDetailId = String(bug.id);
+    ui.bugEditing = false;
+    const nextHash = `#/bugs/${encodeURIComponent(bug.id)}`;
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    } else {
+      renderView(true);
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
+  }
+
+  function closeBugPage() {
+    ui.bugDetailId = null;
+    ui.bugEditing = false;
+    const nextHash = '#/bugs';
+    if (window.location.hash !== nextHash) {
+      window.location.hash = nextHash;
+    } else {
+      renderView(true);
+      window.scrollTo({ top: 0, behavior: 'auto' });
+    }
   }
 
   function closeDrawer() {
@@ -1811,8 +2419,8 @@
         <header class="drawer-head">
           <div class="drawer-head-copy">
             <div class="drawer-kicker">${icon('bug')}禅道 Bug ${esc(bug.displayId || '#' + bug.id)} · ${esc(bug.project)}</div>
-            <h2 id="drawer-title">${bug.isAutojob ? '<span class="source-badge">AI客服</span>' : ''}${esc(bug.title)}</h2>
-            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status, bug)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span>${bug.isAutojob ? ` <span class="role-badge role-badge-warm" style="margin-left:6px">优先级 ${esc(bug.pri)}</span>` : ''}</p>
+            <h2 id="drawer-title">${esc(bug.title)}</h2>
+            <p>${severityBadge(bug.severity)} <span style="display:inline-block;margin-left:4px">${bugStatusPill(bug.status, bug)}</span> <span class="role-badge" style="margin-left:6px">${esc(bug.typeLabel)}</span></p>
           </div>
           <button class="icon-btn" type="button" data-action="close-drawer" aria-label="关闭详情">${icon('close')}</button>
         </header>
@@ -1825,7 +2433,6 @@
               <div class="bug-fact"><span>模块</span><strong>${esc(bug.module || '未指定')}</strong></div>
               <div class="bug-fact"><span>负责人</span><strong>${esc(bug.assignee)}</strong></div>
               <div class="bug-fact"><span>报告人</span><strong>${esc(bug.reporter)}</strong></div>
-              ${bug.isAutojob ? `<div class="bug-fact"><span>来源</span><strong>AI客服提取 · 客服群聊</strong></div>` : ''}
               <div class="bug-fact"><span>影响版本</span><strong>${esc(bug.version || '未填写')}</strong></div>
               <div class="bug-fact"><span>Bug 类型</span><strong>${esc(bug.typeLabel)}</strong></div>
               <div class="bug-fact"><span>创建时间</span><strong>${esc(fmtDateTime(bug.createdAt))}</strong></div>
@@ -1836,12 +2443,12 @@
           </div>
           <div class="drawer-section">
             <div class="drawer-section-title">复现步骤</div>
-            <div class="bug-text-block"><strong>Steps to reproduce</strong>${Core.linkifyText(bug.steps || '未填写')}</div>
+            <div class="bug-text-block"><strong>Steps to reproduce</strong>${Core.renderRichText(bug.steps || '未填写')}</div>
           </div>
           ${(bug.expected || bug.actual) ? `<div class="drawer-section">
             <div class="drawer-section-title">预期结果 vs 实际结果</div>
-            <div class="bug-text-block"><strong>预期结果</strong>${Core.linkifyText(bug.expected || '未填写')}</div>
-            <div class="bug-text-block"><strong>实际结果</strong>${Core.linkifyText(bug.actual || '未填写')}</div>
+            <div class="bug-text-block"><strong>预期结果</strong>${Core.renderRichText(bug.expected || '未填写')}</div>
+            <div class="bug-text-block"><strong>实际结果</strong>${Core.renderRichText(bug.actual || '未填写')}</div>
           </div>` : ''}
           ${task ? `<div class="drawer-section">
             <div class="drawer-section-title">关联任务</div>
@@ -1855,7 +2462,7 @@
             <div class="drawer-section-title">处理记录</div>
             ${timelineHtml(bug.history)}
           </div>
-          <div class="readonly-note">${icon('shield')}<span>已有 Bug 从禅道只读同步。状态流转、指派和关闭请在禅道完成。</span></div>
+          <div class="readonly-note">${icon('shield')}<span>编辑、指派和状态流转会通过禅道 CLI 写入正式 Bug。</span></div>
         </div>
         <footer class="drawer-footer">
           <span class="drawer-source">${icon('database')}ZENTAO · ${esc(bug.rawStatus)}</span>
@@ -1952,14 +2559,16 @@
     return values.map((key) => `<option value="${key}"${key === selected ? ' selected' : ''}>${key} · ${key === 'P0' ? '最高' : key === 'P1' ? '高' : key === 'P2' ? '中' : '低'}</option>`).join('');
   }
 
-  function bugProjectOptions() {
+  function bugProjectOptions(selected) {
     const projects = state.creation && state.creation.projects ? state.creation.projects : [];
-    return `<option value="">不关联项目</option>${projects.map((project) => `<option value="${esc(project.id)}">${esc(project.name)}</option>`).join('')}`;
+    const current = String(selected || '');
+    return `<option value="">不关联项目</option>${projects.map((project) => `<option value="${esc(project.id)}"${String(project.id) === current ? ' selected' : ''}>${esc(project.name)}</option>`).join('')}`;
   }
 
-  function bugExecutionOptions() {
+  function bugExecutionOptions(selected) {
     const executions = state.creation && state.creation.executions ? state.creation.executions : [];
-    return `<option value="">不关联执行</option>${executions.map((exec) => `<option value="${esc(exec.id)}">${esc(exec.name)} · ${esc(exec.projectName)}</option>`).join('')}`;
+    const current = String(selected || '');
+    return `<option value="">不关联执行</option>${executions.map((exec) => `<option value="${esc(exec.id)}"${String(exec.id) === current ? ' selected' : ''}>${esc(exec.name)} · ${esc(exec.projectName)}</option>`).join('')}`;
   }
 
   async function openConnectionModal() {
@@ -2055,7 +2664,7 @@
           setBusy('test');
           resultBox.hidden = true;
           try {
-            const result = await apiRequest('/api/zentao/test', { method: 'POST', body: payload() });
+            const result = await apiRequest('/api/zentao/test', { method: 'POST', body: payload(), timeoutMs: 35000 });
             const names = (result.products || []).slice(0, 3).map((product) => product.name).filter(Boolean);
             showResult(`连接成功：${result.account} · ${result.productCount || 0} 个产品 / ${result.projectCount || 0} 个项目${names.length ? ` · ${names.join('、')}${result.productCount > names.length ? ' 等' : ''}` : ''}`, 'success');
           } catch (error) {
@@ -2075,7 +2684,8 @@
           try {
             const result = await apiRequest('/api/zentao/connection', {
               method: 'POST',
-              body: payload()
+              body: payload(),
+              timeoutMs: 120000
             });
             closeModal();
             if (result.snapshot && result.snapshot.sync && result.snapshot.sync.lastSyncAt) {
@@ -2201,7 +2811,7 @@
             setSyncChrome();
             schedulePolling(2000);
             navigate('bugs');
-            if (result.id && bugById(String(result.id))) openBugDrawer(String(result.id));
+            if (result.id && bugById(String(result.id))) openBugPage(String(result.id));
           } catch (error) {
             showFormError(form, error.message);
             form.dataset.submitting = '';
@@ -2276,7 +2886,7 @@
   }
 
   async function changeBugStatus() {
-    showToast('已有 Bug 为只读，请在禅道中流转状态。', 'warn');
+    showToast('请在 Bug 详情页使用编辑、解决、关闭或激活操作。', 'info');
   }
 
   async function deleteTask() {
@@ -2723,7 +3333,7 @@
         sub: `${bug.displayId || '#' + bug.id} · ${bug.severity} · ${bug.statusLabel}`,
         icon: 'bug',
         tint: 'tint-red',
-        run: () => openBugDrawer(bug.id)
+        run: () => openBugPage(bug.id)
       }));
 
     const matches = (item) => !q || `${item.label} ${item.sub}`.toLowerCase().includes(q);
@@ -2860,11 +3470,15 @@
     if (action === 'report-generate') { generateReport(ui.reportDate); return; }
     if (action === 'report-today') { ui.reportDate = Core.localDate(); closeNotifications(); navigate('reports'); return; }
     if (action === 'open-task') { openTaskDrawer(actionEl.dataset.id); return; }
-    if (action === 'open-bug') { openBugDrawer(actionEl.dataset.id); return; }
+    if (action === 'open-bug') { openBugPage(actionEl.dataset.id); return; }
+    if (action === 'close-bug-page') { closeBugPage(); return; }
+    if (action === 'edit-bug-page') { openBugEdit(actionEl.dataset.id); return; }
+    if (action === 'close-bug-edit') { closeBugEdit(); return; }
+    if (action === 'bug-action') { openBugAction(actionEl.dataset.bugAction, actionEl.dataset.id); return; }
     if (action === 'close-drawer') { closeDrawer(); return; }
     if (action === 'close-modal') { closeModal(); return; }
     if (action === 'edit-task') { showToast('任务从禅道只读同步，请到禅道编辑。', 'warn'); return; }
-    if (action === 'edit-bug') { const bug = bugById(actionEl.dataset.id); if (bug) openBugDrawer(bug.id); return; }
+    if (action === 'edit-bug') { const bug = bugById(actionEl.dataset.id); if (bug) openBugEdit(bug.id); return; }
     if (action === 'delete-task') { deleteTask(); return; }
     if (action === 'delete-bug') { deleteBug(); return; }
     if (action === 'toggle-task-done') { toggleTaskDone(); return; }
@@ -3075,6 +3689,15 @@
       event.preventDefault();
       await saveProfile(form);
     }
+    if (form.matches('form[data-form="bug-edit"]')) {
+      event.preventDefault();
+      await saveBugEdit(form);
+      return;
+    }
+    if (form.matches('form[data-bug-form="action"]')) {
+      event.preventDefault();
+      await submitBugAction(form);
+    }
   }
 
   function handleKeydown(event) {
@@ -3101,6 +3724,8 @@
     if (event.key === 'Escape') {
       if ($('#modal-root').firstElementChild) { closeModal(); return; }
       if ($('#drawer-root').firstElementChild) { closeDrawer(); return; }
+      if (ui.bugEditing) { closeBugEdit(); return; }
+      if (ui.bugDetailId) { closeBugPage(); return; }
       if ($('#quick-create-menu') && !$('#quick-create-menu').hidden) { closeQuickMenu(); return; }
       if ($('#notification-panel') && !$('#notification-panel').hidden) { closeNotifications(); return; }
       if ($('#sidebar').classList.contains('open')) { closeSidebar(); return; }
@@ -3149,7 +3774,10 @@
 
   function handleWindowHashChange() {
     if (!state) return;
-    ui.view = syncFromHash();
+    const parsed = parseHash();
+    ui.view = parsed.view;
+    ui.bugDetailId = parsed.bugId;
+    ui.bugEditing = parsed.bugEditing;
     closeDrawer();
     closeCommand();
     closeSidebar();
@@ -3177,6 +3805,8 @@
     const prefs = loadUiPrefs();
     ui = {
       view: syncFromHash(),
+      bugDetailId: parseHash().bugId,
+      bugEditing: parseHash().bugEditing,
       taskView: prefs.taskView === 'list' ? 'list' : 'board',
       taskScope: prefs.taskScope === 'test' ? 'test' : 'mine',
       bugScope: ['opened', 'assigned', 'autojob', 'all'].includes(prefs.bugScope) ? prefs.bugScope : 'opened',

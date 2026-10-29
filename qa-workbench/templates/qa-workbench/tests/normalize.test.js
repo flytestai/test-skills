@@ -146,6 +146,25 @@ test('bug severity, status, module and ownership are normalized', () => {
   assert.equal(row.isAssignedToMe, false);
   assert.equal(row.isOpen, true);
   assert.equal(row.url, 'https://chandao.example.com/zentao/bug-view-5201.html');
+  assert.equal(row.projectId, '');
+  assert.equal(row.executionId, '');
+  assert.equal(row.storyId, '');
+});
+
+test('bug edit defaults expose project, execution, story and deadline', () => {
+  const row = bug({
+    project: '47',
+    execution: '87',
+    story: '903',
+    deadline: '2026-11-05',
+    resolution: 'willnotfix',
+    openedBuild: '主干'
+  });
+  assert.equal(row.projectId, '47');
+  assert.equal(row.executionId, '87');
+  assert.equal(row.storyId, '903');
+  assert.match(row.deadline, /^2026-11-05/);
+  assert.equal(row.resolutionLabel, '不予解决');
 });
 
 test('bug expected and actual sections are extracted from ZenTao steps', () => {
@@ -170,6 +189,16 @@ test('bug status aliases map to the UI model', () => {
   assert.equal(bug({ status: 'resolved' }).status, 'verifying');
   assert.equal(bug({ status: 'closed' }).status, 'closed');
   assert.equal(bug({ status: 'closed' }).isOpen, false);
+});
+
+test('only bugs awaiting my verification are marked as pending verification', () => {
+  const reported = bug({ id: 9101, status: 'resolved', openedBy: 'qa_user', assignedTo: 'dev01', resolvedBy: 'dev01' });
+  assert.equal(reported.needsMyVerification, true);
+  const assignedBack = bug({ id: 9102, status: 'resolved', openedBy: 'dev01', assignedTo: 'qa_user', resolvedBy: 'dev01' });
+  assert.equal(assignedBack.needsMyVerification, true);
+  const resolvedByMe = bug({ id: 9103, status: 'resolved', openedBy: 'qa_user', assignedTo: 'dev01', resolvedBy: 'qa_user' });
+  assert.equal(resolvedByMe.needsMyVerification, false);
+  assert.equal(bug({ id: 9104, status: 'active', openedBy: 'qa_user' }).needsMyVerification, false);
 });
 
 test('autojob bugs are tagged and related to the current account', () => {

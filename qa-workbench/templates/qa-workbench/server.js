@@ -2,6 +2,7 @@
 
 const http = require('node:http');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const {
   ZentaoError,
@@ -13,7 +14,10 @@ const {
   listExecutions,
   listTasks,
   listBugs,
-  createBug
+  getBug,
+  createBug,
+  updateBug,
+  bugAction
 } = require('./lib/zentao');
 const {
   BUG_TYPES,
@@ -54,6 +58,7 @@ const DEFAULT_CONFIG = {
     openedBuildLabel: '主干',
     serverVersion: '22.4',
     cacheSeconds: 300,
+    syncTimes: ['08:30', '12:00', '17:00'],
     refreshCooldownMs: 5000,
     cliPath: '',
     moduleNames: {},
@@ -129,6 +134,10 @@ function loadConfig() {
     config.watch.productIds = String(process.env.QDESK_AUTOJOB_PRODUCTS)
       .split(',').map((id) => id.trim()).filter(Boolean);
   }
+  if (process.env.QDESK_SYNC_TIMES) {
+    config.zentao.syncTimes = String(process.env.QDESK_SYNC_TIMES)
+      .split(',').map((time) => time.trim()).filter(Boolean);
+  }
   config.server.port = Math.max(1, Math.min(65535, Number(config.server.port) || 4173));
   config.server.host = config.server.host || '127.0.0.1';
   config.tester.account = String(config.tester.account || '').trim();
@@ -137,6 +146,13 @@ function loadConfig() {
   config.zentao.taskProjectIds = (config.zentao.taskProjectIds || [])
     .map((id) => String(id)).filter((id) => /^\d+$/.test(id));
   config.zentao.cacheSeconds = Math.max(60, Number(config.zentao.cacheSeconds) || 300);
+  config.zentao.syncTimes = (Array.isArray(config.zentao.syncTimes)
+    ? config.zentao.syncTimes
+    : DEFAULT_CONFIG.zentao.syncTimes)
+    .map((time) => String(time).trim())
+    .filter((time) => /^([01]\d|2[0-3]):[0-5]\d$/.test(time))
+    .sort();
+  if (!config.zentao.syncTimes.length) config.zentao.syncTimes = DEFAULT_CONFIG.zentao.syncTimes.slice();
   config.zentao.refreshCooldownMs = Math.max(0, Number(config.zentao.refreshCooldownMs) || 0);
   config.zentao.openedBuild = String(config.zentao.openedBuild || 'trunk');
   config.zentao.openedBuildLabel = String(config.zentao.openedBuildLabel || '主干');
@@ -161,6 +177,13 @@ const cliOptions = {
   env: credentialEnv(auth, process.env)
 };
 
+const fileTokenCache = {
+  token: '',
+  base: '',
+  account: '',
+  expiresAt: 0
+};
+
 const caches = {
   version: { at: 0, ttl: 10 * 60 * 1000, value: null },
   users: { at: 0, ttl: 60 * 60 * 1000, value: null },
@@ -176,6 +199,7 @@ let snapshotRevision = 0;
 let snapshotInflight = null;
 let snapshotEpoch = 0;
 let lastConnectionError = '';
+let lastConnectionErrorCode = '';
 let syncStartedAt = 0;
 let syncSource = '';
 let syncReason = '';
@@ -214,10 +238,15 @@ function resetRuntime() {
   syncSource = '';
   syncReason = '';
   lastConnectionError = '';
+  lastConnectionErrorCode = '';
   if (nextSyncTimer) {
     clearTimeout(nextSyncTimer);
     nextSyncTimer = null;
   }
+  fileTokenCache.token = '';
+  fileTokenCache.base = '';
+  fileTokenCache.account = '';
+  fileTokenCache.expiresAt = 0;
   Object.values(caches).forEach((entry) => {
     entry.at = 0;
     entry.value = null;
@@ -383,6 +412,197 @@ async function loadAutojobBugs(products, users, webUrl, moduleNames, force) {
   });
 }
 
+function sortAutojobBugs(rows) {
+  const priority = ['P0', 'P1', 'P2', 'P3'];
+  return (rows || []).slice().sort((a, b) => {
+    const byPriority = priority.indexOf(a.pri) - priority.indexOf(b.pri);
+    if (byPriority) return byPriority;
+    return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
+  });
+}
+
+function relatedAutojobBugs(items, account) {
+  return sortAutojobBugs((items || [])
+    .map((bug) => {
+      const relation = autojobRelation(bug, account);
+      return relation ? { ...bug, autojobRelation: relation } : null;
+    })
+    .filter(Boolean));
+}
+
+function autojobItemsForSnapshot() {
+  if (caches.autojob.value && Array.isArray(caches.autojob.value.items)) {
+    return caches.autojob.value.items;
+  }
+  const info = (snapshot && snapshot.autojob) || {};
+  const seeded = (info.bugs || []).map((bug) => {
+    const copy = { ...bug };
+    delete copy.autojobRelation;
+    return copy;
+  });
+  caches.autojob.value = {
+    enabled: Boolean(info.enabled),
+    accounts: info.accounts || (config.watch.autojobAccounts || []),
+    items: seeded,
+    warnings: [],
+    scannedProducts: info.scannedProducts || 0,
+    scannedAt: info.scannedAt || null
+  };
+  return seeded;
+}
+
+function snapshotUsersMap() {
+  const map = new Map();
+  const cachedUsers = caches.users.value && Array.isArray(caches.users.value.items)
+    ? caches.users.value.items
+    : [];
+  cachedUsers.forEach((user) => {
+    if (user && user.account) map.set(String(user.account), String(user.realname || user.account));
+  });
+  ((snapshot && snapshot.bugs) || []).forEach((bug) => {
+    [
+      [bug.reporterAccount, bug.reporter],
+      [bug.assigneeAccount, bug.assignee],
+      [bug.resolvedByAccount, bug.resolvedByName],
+      [bug.closedByAccount, bug.closedByName]
+    ].forEach(([account, name]) => {
+      if (account && account !== 'closed' && name) map.set(String(account), String(name));
+    });
+  });
+  return map;
+}
+
+function rebuildSnapshotState(bugs, autojobItems) {
+  const account = config.tester.account;
+  const rows = (bugs || []).slice().sort(compareBug);
+  const autojobBugs = relatedAutojobBugs(autojobItems || [], account);
+  const autojobSummary = buildAutojobStats(autojobItems || [], account);
+  const openedBugs = rows.filter((bug) => bug.isMine);
+  const assignedBugs = rows.filter((bug) => bug.isAssignedToMe);
+  const groups = (snapshot.products || []).map((product) => {
+    const productBugs = rows.filter((bug) => String(bug.productId) === String(product.id));
+    const open = productBugs.filter((bug) => bug.status !== 'closed');
+    return {
+      ...product,
+      bugCount: productBugs.length,
+      openBugs: open.length,
+      severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
+      openedByMe: productBugs.filter((bug) => bug.isMine).length,
+      assignedToMe: productBugs.filter((bug) => bug.isAssignedToMe).length
+    };
+  });
+  const previousCounts = (snapshot.sync && snapshot.sync.counts) || {};
+  const now = new Date().toISOString();
+
+  snapshotEpoch += 1;
+  snapshot.bugs = rows;
+  snapshot.products = groups;
+  snapshot.bugStats = buildBugStats(rows);
+  snapshot.bugScopeStats = {
+    opened: buildBugStats(openedBugs),
+    assigned: buildBugStats(assignedBugs),
+    all: buildBugStats(rows),
+    autojob: buildBugStats(autojobBugs)
+  };
+  snapshot.autojob = {
+    ...(snapshot.autojob || {}),
+    summary: autojobSummary,
+    bugs: autojobBugs
+  };
+  if (snapshot.zentao) snapshot.zentao.products = groups;
+  snapshot.sync = {
+    ...(snapshot.sync || {}),
+    counts: {
+      ...previousCounts,
+      bugs: rows.length,
+      myBugs: openedBugs.length,
+      assignedBugs: assignedBugs.length,
+      autojobBugs: autojobBugs.length,
+      autojobOpen: autojobSummary.open,
+      autojobClosed: autojobSummary.closed
+    },
+    lastIncrementalAt: now
+  };
+  snapshot.scopeCounts = {
+    ...(snapshot.scopeCounts || {}),
+    bugs: {
+      opened: openedBugs.length,
+      assigned: assignedBugs.length,
+      all: rows.length,
+      autojob: autojobBugs.length
+    }
+  };
+  snapshot.generatedAt = now;
+  snapshotAt = Date.now();
+  snapshotRevision += 1;
+  lastConnectionError = '';
+  lastConnectionErrorCode = '';
+  writeSnapshotCache({ snapshot, revision: snapshotRevision });
+}
+
+function applyBugToSnapshot(bug) {
+  if (!snapshot) return false;
+  const account = config.tester.account;
+  const bugId = String(bug.id);
+  const relation = bug.isAutojob ? autojobRelation(bug, account) : '';
+  const belongs = Boolean(bug.isMine || bug.isAssignedToMe || relation);
+
+  const items = autojobItemsForSnapshot();
+  const itemIndex = items.findIndex((row) => String(row.id) === bugId);
+  if (bug.isAutojob) {
+    if (itemIndex >= 0) items[itemIndex] = bug;
+    else items.push(bug);
+  } else if (itemIndex >= 0) {
+    items.splice(itemIndex, 1);
+  }
+
+  const bugs = (snapshot.bugs || []).filter((row) => String(row.id) !== bugId);
+  if (belongs) bugs.push(bug);
+  rebuildSnapshotState(bugs, items);
+  return true;
+}
+
+function removeBugFromSnapshot(bugId) {
+  if (!snapshot) return false;
+  const id = String(bugId);
+  const items = autojobItemsForSnapshot();
+  const itemIndex = items.findIndex((row) => String(row.id) === id);
+  if (itemIndex >= 0) items.splice(itemIndex, 1);
+  const bugs = (snapshot.bugs || []).filter((row) => String(row.id) !== id);
+  rebuildSnapshotState(bugs, items);
+  return true;
+}
+
+async function refreshSnapshotBug(bugId, expectedStatus) {
+  if (!snapshot) return false;
+  let raw = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await getBug(bugId, cliOptions);
+    raw = result && result.data && typeof result.data === 'object' ? result.data : result;
+    if (!raw || raw.id == null) {
+      throw new Error(`禅道未返回 Bug #${bugId} 的数据。`);
+    }
+    if (!expectedStatus || String(raw.status || '') === expectedStatus) break;
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  if (expectedStatus && String(raw.status || '') !== expectedStatus) {
+    throw new Error(`禅道返回的状态仍为「${raw.status || '未知'}」，预期「${expectedStatus}」，稍后会自动重新同步。`);
+  }
+  const existing = (snapshot.bugs || []).find((bug) => String(bug.id) === String(bugId));
+  const productId = String(raw.product || (existing && existing.productId) || '');
+  const product = (snapshot.products || []).find((row) => String(row.id) === productId);
+  const normalized = normalizeBug(raw, {
+    users: snapshotUsersMap(),
+    account: config.tester.account,
+    productId,
+    productName: product ? product.name : (existing ? existing.project : '禅道产品'),
+    moduleNames: config.zentao.moduleNames || {},
+    webUrl: (snapshot.zentao && snapshot.zentao.server) || '',
+    autojobAccounts: new Set(config.watch.autojobAccounts || [])
+  });
+  return applyBugToSnapshot(normalized);
+}
+
 async function buildSnapshot(force) {
   const start = Date.now();
   const warnings = [];
@@ -469,18 +689,7 @@ async function buildSnapshot(force) {
     bundle.bugs.forEach((bug) => globalBugs.set(String(bug.id), bug));
   });
   const account = config.tester.account;
-  const autojobBugs = (autojobResult.items || [])
-    .map((bug) => {
-      const relation = autojobRelation(bug, account);
-      return relation ? { ...bug, autojobRelation: relation } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => {
-      const priority = ['P0', 'P1', 'P2', 'P3'];
-      const byPriority = priority.indexOf(a.pri) - priority.indexOf(b.pri);
-      if (byPriority) return byPriority;
-      return String(b.updatedAt || '').localeCompare(String(a.updatedAt || ''));
-    });
+  const autojobBugs = relatedAutojobBugs(autojobResult.items || [], account);
   autojobBugs.forEach((bug) => {
     if (!globalBugs.has(String(bug.id))) globalBugs.set(String(bug.id), bug);
   });
@@ -568,6 +777,7 @@ async function buildSnapshot(force) {
     types: BUG_TYPE_OPTIONS,
     priorities: PRIORITY_OPTIONS,
     severities: SEVERITY_OPTIONS,
+    users: Array.from(users.entries()).map(([account, name]) => ({ account, name })),
     projects: projectRows.map((project) => ({ id: project.id, name: project.name })),
     executions: executionRows.map((exec) => ({
       id: String(exec.id),
@@ -686,6 +896,8 @@ function currentSyncState() {
     cacheAgeMs: snapshotAt ? Date.now() - snapshotAt : null,
     cacheSeconds: config.zentao.cacheSeconds,
     stale: !snapshot || Date.now() - snapshotAt >= ttl,
+    schedule: config.zentao.syncTimes,
+    nextSyncAt: scheduledSyncAt().toISOString(),
     revision: snapshotRevision,
     lastError: lastConnectionError || null
   };
@@ -812,6 +1024,8 @@ function emptySnapshot() {
   };
 }
 
+const SYNC_TIMEOUT_MS = 15 * 60 * 1000;
+
 function triggerSync(options) {
   const opts = options || {};
   if (snapshotInflight) return snapshotInflight;
@@ -820,22 +1034,34 @@ function triggerSync(options) {
   syncSource = opts.reason || 'auto';
   syncReason = opts.reason || '';
   let task = null;
+  let watchdogTimer = null;
   task = (async () => {
+    const watchdog = new Promise((resolve, reject) => {
+      watchdogTimer = setTimeout(() => {
+        reject(new Error('后台同步超时（15 分钟），已中止本轮；将按计划重试。'));
+      }, SYNC_TIMEOUT_MS);
+      if (watchdogTimer.unref) watchdogTimer.unref();
+    });
     try {
-      const built = await buildSnapshot(Boolean(opts.force));
+      const built = await Promise.race([buildSnapshot(Boolean(opts.force)), watchdog]);
       if (epoch === snapshotEpoch) {
         snapshot = built;
         snapshotAt = Date.now();
         snapshotRevision += 1;
         lastConnectionError = '';
+        lastConnectionErrorCode = '';
         writeSnapshotCache({ snapshot: built, revision: snapshotRevision });
       }
       return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
     } catch (error) {
-      if (epoch === snapshotEpoch) lastConnectionError = String(error && error.message ? error.message : error);
+      if (epoch === snapshotEpoch) {
+        lastConnectionError = String(error && error.message ? error.message : error);
+        lastConnectionErrorCode = error && error.code ? String(error.code) : '';
+      }
       console.error(`[QDesk] 后台同步失败（${syncSource}）：`, lastConnectionError);
       return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
     } finally {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
       if (snapshotInflight === task) snapshotInflight = null;
       syncStartedAt = 0;
       scheduleNextSync();
@@ -845,15 +1071,35 @@ function triggerSync(options) {
   return task;
 }
 
+function scheduledSyncAt(from) {
+  const now = from instanceof Date ? new Date(from.getTime()) : new Date();
+  const times = config.zentao.syncTimes && config.zentao.syncTimes.length
+    ? config.zentao.syncTimes
+    : DEFAULT_CONFIG.zentao.syncTimes;
+  for (let dayOffset = 0; dayOffset <= 1; dayOffset += 1) {
+    for (const value of times) {
+      const [hour, minute] = value.split(':').map(Number);
+      const candidate = new Date(now.getTime());
+      candidate.setDate(candidate.getDate() + dayOffset);
+      candidate.setHours(hour, minute, 0, 0);
+      if (candidate.getTime() > now.getTime()) return candidate;
+    }
+  }
+  const fallback = new Date(now.getTime());
+  fallback.setDate(fallback.getDate() + 1);
+  fallback.setHours(8, 30, 0, 0);
+  return fallback;
+}
+
 function scheduleNextSync(delayMs) {
   if (!schedulerStarted) return;
   if (nextSyncTimer) clearTimeout(nextSyncTimer);
   const delay = delayMs == null
-    ? (lastConnectionError ? 60000 : config.zentao.cacheSeconds * 1000)
+    ? scheduledSyncAt().getTime() - Date.now()
     : delayMs;
   nextSyncTimer = setTimeout(() => {
     nextSyncTimer = null;
-    triggerSync({ reason: 'auto' });
+    triggerSync({ force: true, reason: 'scheduled' });
   }, Math.max(1000, delay));
   if (nextSyncTimer.unref) nextSyncTimer.unref();
 }
@@ -863,16 +1109,14 @@ let schedulerStarted = false;
 function startSyncScheduler() {
   if (schedulerStarted) return;
   schedulerStarted = true;
-  const ttl = config.zentao.cacheSeconds * 1000;
-  const fresh = snapshot && Date.now() - snapshotAt < ttl;
-  if (fresh) {
-    scheduleNextSync();
+  if (!snapshot) {
+    const bootTimer = setTimeout(() => {
+      triggerSync({ reason: 'startup' });
+    }, 600);
+    if (bootTimer.unref) bootTimer.unref();
     return;
   }
-  const bootTimer = setTimeout(() => {
-    triggerSync({ reason: snapshot ? 'auto' : 'startup' });
-  }, 600);
-  if (bootTimer.unref) bootTimer.unref();
+  scheduleNextSync();
 }
 
 function getSnapshot(options) {
@@ -881,8 +1125,6 @@ function getSnapshot(options) {
     triggerSync({ reason: opts.reason || 'bootstrap' });
   } else if (opts.force) {
     triggerSync({ force: true, reason: opts.reason || 'manual' });
-  } else if (Date.now() - snapshotAt >= config.zentao.cacheSeconds * 1000) {
-    triggerSync({ reason: 'stale' });
   }
   return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
 }
@@ -910,6 +1152,111 @@ function parseSeverityInput(value) {
   const number = Number(raw);
   if (Number.isInteger(number) && number >= 1 && number <= 4) return `P${number - 1}`;
   return '';
+}
+
+const BUG_RESOLUTIONS = new Set([
+  'fixed', 'notrepro', 'bydesign', 'duplicate', 'external', 'postponed', 'willnotfix', 'tostory'
+]);
+
+function badRequest(message) {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+}
+
+function normalizeBugFields(body) {
+  const input = body || {};
+  const fields = {};
+  if (input.title !== undefined) {
+    const title = String(input.title || '').trim();
+    if (!title) throw badRequest('请填写 Bug 标题。');
+    if (title.length > 180) throw badRequest('Bug 标题不能超过 180 个字符。');
+    fields.title = title;
+  }
+  if (input.severity !== undefined) {
+    const severity = parseSeverityInput(input.severity);
+    if (!severity) throw badRequest('严重程度只能是 P0–P3。');
+    fields.severity = severityRaw(severity);
+  }
+  if (input.pri !== undefined) {
+    const priority = parseSeverityInput(input.pri);
+    if (!priority) throw badRequest('优先级只能是 P0–P3。');
+    fields.pri = Number(priority.slice(1)) + 1;
+  }
+  if (input.type !== undefined) {
+    const type = String(input.type || '');
+    if (!Object.prototype.hasOwnProperty.call(BUG_TYPES, type)) throw badRequest('Bug 类型无效。');
+    fields.type = type;
+  }
+  if (input.openedBuild !== undefined) {
+    const build = String(input.openedBuild || '').trim().slice(0, 120);
+    fields.openedBuild = build || config.zentao.openedBuild || 'trunk';
+  }
+  if (input.steps !== undefined) {
+    fields.steps = String(input.steps || '').slice(0, 200000);
+  }
+  if (input.project !== undefined) {
+    const value = String(input.project || '0').trim();
+    if (!/^\d{1,12}$/.test(value)) throw badRequest('所属项目 ID 无效。');
+    fields.project = Number(value);
+  }
+  if (input.execution !== undefined) {
+    const value = String(input.execution || '0').trim();
+    if (!/^\d{1,12}$/.test(value)) throw badRequest('所属执行 ID 无效。');
+    fields.execution = Number(value);
+  }
+  if (input.story !== undefined) {
+    const value = String(input.story || '0').trim();
+    if (!/^\d{1,12}$/.test(value)) throw badRequest('相关需求 ID 无效。');
+    fields.story = Number(value);
+  }
+  if (input.assignedTo !== undefined) {
+    const account = String(input.assignedTo || '').trim();
+    if (account && !/^[A-Za-z0-9_.@-]{1,64}$/.test(account)) {
+      throw badRequest('指派账号格式无效，请填写禅道登录账号。');
+    }
+    fields.assignedTo = account;
+  }
+  if (!Object.keys(fields).length) throw badRequest('没有需要更新的字段。');
+  return fields;
+}
+
+function normalizeBugAction(action, body) {
+  const input = body || {};
+  const data = {
+    comment: String(input.comment || '').slice(0, 4000)
+  };
+  const account = String(input.assignedTo || '').trim();
+  if (account) {
+    if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(account)) {
+      throw badRequest('指派账号格式无效，请填写禅道登录账号。');
+    }
+    data.assignedTo = account;
+  }
+  if (action === 'resolve') {
+    const resolution = String(input.resolution || 'fixed');
+    if (!BUG_RESOLUTIONS.has(resolution)) throw badRequest('解决方案无效。');
+    data.resolution = resolution;
+    const build = String(input.resolvedBuild || '').trim().slice(0, 120);
+    data.resolvedBuild = build || config.zentao.openedBuild || 'trunk';
+  }
+  if (action === 'activate') {
+    const build = String(input.openedBuild || '').trim().slice(0, 120);
+    data.openedBuild = build || config.zentao.openedBuild || 'trunk';
+  }
+  if (action === 'confirm') {
+    if (input.pri !== undefined && input.pri !== '') {
+      const priority = parseSeverityInput(input.pri);
+      if (!priority) throw badRequest('优先级只能是 P0–P3。');
+      data.pri = Number(priority.slice(1)) + 1;
+    }
+    if (input.type !== undefined && input.type !== '') {
+      if (!Object.prototype.hasOwnProperty.call(BUG_TYPES, input.type)) throw badRequest('Bug 类型无效。');
+      data.type = String(input.type);
+    }
+    if (input.deadline) data.deadline = String(input.deadline).slice(0, 20);
+  }
+  return data;
 }
 
 function validateBugInput(body) {
@@ -992,6 +1339,131 @@ function validateBugInput(body) {
     projectId: projectId || undefined,
     executionId: executionId || undefined
   };
+}
+
+function requestTimeout(ms) {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
+function readCliProfileAuth() {
+  try {
+    const profilePath = path.join(os.homedir(), '.config', 'zentao', 'zentao.json');
+    const parsed = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+    const profiles = parsed && parsed.profiles && typeof parsed.profiles === 'object' ? parsed.profiles : {};
+    const current = parsed && parsed.currentProfile ? profiles[parsed.currentProfile] : null;
+    const profile = current || Object.values(profiles)[0];
+    if (!profile || !profile.token || !profile.server) return null;
+    return {
+      url: String(profile.server).replace(/\/+$/, ''),
+      account: String(profile.account || ''),
+      token: String(profile.token)
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+async function getFileToken(force) {
+  const now = Date.now();
+  const expectedBase = auth && auth.url ? auth.url.replace(/\/+$/, '') : '';
+  const expectedAccount = auth && auth.account ? auth.account : '';
+  const cacheMatches = (!expectedBase || fileTokenCache.base === expectedBase)
+    && (!expectedAccount || fileTokenCache.account === expectedAccount);
+  if (!force && cacheMatches && fileTokenCache.token && fileTokenCache.expiresAt > now) {
+    return { token: fileTokenCache.token, base: fileTokenCache.base };
+  }
+  let token = '';
+  let base = '';
+  let account = auth && auth.account ? auth.account : '';
+  if (auth && auth.url && auth.password) {
+    const response = await fetch(`${auth.url.replace(/\/+$/, '')}/api.php/v1/tokens`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ account: auth.account, password: auth.password }),
+      signal: requestTimeout(15000)
+    });
+    if (response.ok) {
+      const payload = await response.json().catch(() => null);
+      if (payload && payload.token) {
+        token = String(payload.token);
+        base = auth.url.replace(/\/+$/, '');
+      }
+    }
+  }
+  if (!token) {
+    const profile = readCliProfileAuth();
+    if (profile) {
+      token = profile.token;
+      base = profile.url;
+      account = account || profile.account;
+    }
+  }
+  if (!token || !base) {
+    const error = new Error('未找到可用的禅道登录凭证，无法读取附件。请先在「配置禅道连接」保存账号密码，或运行 zentao login。');
+    error.status = 502;
+    throw error;
+  }
+  fileTokenCache.token = token;
+  fileTokenCache.base = base;
+  fileTokenCache.account = account;
+  fileTokenCache.expiresAt = now + 20 * 60 * 1000;
+  return { token, base };
+}
+
+function sniffImageMime(buffer) {
+  if (!buffer || buffer.length < 4) return '';
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer.slice(0, 6).toString('ascii') === 'GIF87a' || buffer.slice(0, 6).toString('ascii') === 'GIF89a') return 'image/gif';
+  if (buffer.slice(0, 4).toString('ascii') === 'RIFF' && buffer.slice(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return 'image/bmp';
+  return '';
+}
+
+async function serveZentaoFile(req, res, fileId) {
+  const id = String(fileId || '');
+  if (!/^\d{1,12}$/.test(id)) {
+    sendJson(res, 400, { ok: false, error: { message: '附件 ID 无效。' } });
+    return;
+  }
+  let response = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const credentials = await getFileToken(attempt > 0);
+    response = await fetch(`${credentials.base}/api.php/v1/files/${id}`, {
+      headers: { Token: credentials.token, Accept: '*/*' },
+      redirect: 'manual',
+      signal: requestTimeout(30000)
+    });
+    if (response.status !== 401 && response.status !== 403 && response.status !== 302) break;
+  }
+  if (!response || !response.ok) {
+    const status = response && response.status === 404 ? 404 : 502;
+    sendJson(res, status, {
+      ok: false,
+      error: {
+        message: response && response.status === 404
+          ? '禅道中找不到该附件，可能已被删除。'
+          : '读取禅道附件失败，请重新保存禅道连接或稍后重试。'
+      }
+    });
+    return;
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  const mime = sniffImageMime(buffer);
+  if (!mime) {
+    sendJson(res, 415, { ok: false, error: { message: '该附件不是可预览的图片格式。' } });
+    return;
+  }
+  res.writeHead(200, {
+    'Content-Type': mime,
+    'Content-Length': buffer.length,
+    'Cache-Control': 'private, max-age=3600',
+    'Content-Disposition': 'inline',
+    'X-Content-Type-Options': 'nosniff'
+  });
+  res.end(buffer);
 }
 
 function createHttpServer() {
@@ -1114,18 +1586,37 @@ function readJsonBody(req, limit) {
   });
 }
 
+const PROBE_TIMEOUT_MS = 30000;
+
 async function probeConnection(candidate) {
   const started = Date.now();
   const options = {
     ...cliOptions,
     env: credentialEnv(candidate, process.env),
-    timeoutMs: 90000
+    timeoutMs: 20000
   };
-  const [version, products, projects] = await Promise.all([
-    getVersion({ ...options, timeoutMs: 30000 }).catch(() => ({ cli: 'zentao-cli', server: '' })),
-    listProducts(options),
-    listProjects(options).catch(() => ({ items: [] }))
-  ]);
+  let probeTimer = null;
+  const deadline = new Promise((resolve, reject) => {
+    probeTimer = setTimeout(() => {
+      reject(new Error('连接测试超时（30 秒），请检查网络、禅道地址或账号密码后重试。'));
+    }, PROBE_TIMEOUT_MS);
+    if (probeTimer.unref) probeTimer.unref();
+  });
+  let version;
+  let products;
+  let projects;
+  try {
+    [version, products, projects] = await Promise.race([
+      Promise.all([
+        getVersion({ ...options, timeoutMs: 10000 }).catch(() => ({ cli: 'zentao-cli', server: '' })),
+        listProducts(options),
+        listProjects(options).catch(() => ({ items: [] }))
+      ]),
+      deadline
+    ]);
+  } finally {
+    if (probeTimer) clearTimeout(probeTimer);
+  }
   const productRows = products.items || [];
   if (!productRows.length) {
     throw new Error('连接成功，但当前账号没有可访问的产品。请确认账号权限。');
@@ -1164,7 +1655,8 @@ async function handleApi(req, res, url) {
       productCount: snapshot ? (snapshot.products || []).length : 0,
       projectCount: snapshot ? (snapshot.projectList || []).length : 0,
       connection: currentConnection(snapshot && snapshot.zentao ? snapshot.zentao.server : ''),
-      lastError: lastConnectionError || null
+      lastError: lastConnectionError || null,
+      lastErrorCode: lastConnectionErrorCode || null
     });
     return;
   }
@@ -1319,13 +1811,163 @@ async function handleApi(req, res, url) {
       ? result.data
       : (result && result.data != null ? { id: result.data } : {});
     const bugId = created.id || created.bugID || created.bugId || (created.bug && created.bug.id) || '';
-    triggerSync({ force: true, reason: 'bug-created' });
+    let incremental = false;
+    if (bugId) {
+      try {
+        incremental = await refreshSnapshotBug(String(bugId));
+      } catch (error) {
+        console.error(`[QDesk] 单条 Bug 刷新失败（#${bugId}）：`, error.message);
+      }
+    }
+    if (!incremental) triggerSync({ force: true, reason: 'bug-created' });
     sendJson(res, 201, {
       ok: true,
       data: {
         id: bugId ? String(bugId) : '',
-        message: bugId ? `Bug #${bugId} 已创建。` : 'Bug 已创建。',
-        refreshRequired: true
+        message: bugId
+          ? (incremental ? `Bug #${bugId} 已创建并更新到本地数据。` : `Bug #${bugId} 已创建，正在从禅道重新同步。`)
+          : 'Bug 已创建。',
+        incremental,
+        refreshRequired: !incremental
+      }
+    });
+    return;
+  }
+
+  const bugEditMatch = pathname.match(/^\/api\/bugs\/(\d{1,12})$/);
+  if (bugEditMatch && (req.method === 'PUT' || req.method === 'PATCH')) {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const bugId = bugEditMatch[1];
+    const body = await readJsonBody(req, 1024 * 1024);
+    const fields = normalizeBugFields(body);
+    try {
+      await updateBug(bugId, fields, cliOptions);
+    } catch (error) {
+      if (error instanceof ZentaoError) error.message = `更新 Bug 失败：${error.message}`;
+      throw error;
+    }
+    let incremental = false;
+    try {
+      incremental = await refreshSnapshotBug(bugId);
+    } catch (error) {
+      console.error(`[QDesk] 单条 Bug 刷新失败（#${bugId}）：`, error.message);
+    }
+    if (!incremental) triggerSync({ force: true, reason: 'bug-updated' });
+    sendJson(res, 200, {
+      ok: true,
+      data: {
+        id: bugId,
+        message: incremental
+          ? `Bug #${bugId} 已更新。`
+          : `Bug #${bugId} 已更新，正在从禅道重新同步。`,
+        incremental,
+        refreshRequired: !incremental
+      }
+    });
+    return;
+  }
+
+  const bugRefreshMatch = pathname.match(/^\/api\/bugs\/(\d{1,12})\/refresh$/);
+  if (bugRefreshMatch && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const bugId = bugRefreshMatch[1];
+    const refreshed = await refreshSnapshotBug(bugId);
+    if (!refreshed) {
+      triggerSync({ force: true, reason: 'bug-refresh' });
+      sendJson(res, 202, {
+        ok: true,
+        data: {
+          id: bugId,
+          action: 'refresh',
+          message: '本地快照尚未就绪，已开始初始化同步。',
+          incremental: false,
+          refreshRequired: true
+        }
+      });
+      return;
+    }
+    sendJson(res, 200, {
+      ok: true,
+      data: {
+        id: bugId,
+        action: 'refresh',
+        message: `Bug #${bugId} 已更新。`,
+        incremental: true,
+        refreshRequired: false,
+        autojobSummary: snapshot && snapshot.autojob ? snapshot.autojob.summary : null
+      }
+    });
+    return;
+  }
+
+  const bugActionMatch = pathname.match(/^\/api\/bugs\/(\d{1,12})\/(resolve|close|activate|confirm|delete|assign)$/);
+  if (bugActionMatch && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const bugId = bugActionMatch[1];
+    const action = bugActionMatch[2];
+    const body = await readJsonBody(req, 256 * 1024);
+    try {
+      if (action === 'assign') {
+        const account = String(body.assignedTo || '').trim();
+        if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(account)) {
+          throw badRequest('请选择要指派的禅道账号。');
+        }
+        await updateBug(bugId, { assignedTo: account }, cliOptions);
+      } else {
+        await bugAction(action, bugId, normalizeBugAction(action, body), cliOptions);
+      }
+    } catch (error) {
+      if (error instanceof ZentaoError) {
+        const verb = action === 'resolve' ? '解决' : action === 'close' ? '关闭' : action === 'activate' ? '激活' : action === 'confirm' ? '确认' : '指派';
+        const prefix = action === 'delete' ? '删除 Bug 失败：' : `${verb} Bug 失败：`;
+        error.message = `${prefix}${error.message}`;
+      }
+      throw error;
+    }
+    let incremental = false;
+    if (action === 'delete') {
+      incremental = removeBugFromSnapshot(bugId);
+    } else {
+      const expectedStatus = {
+        resolve: 'resolved',
+        close: 'closed',
+        activate: 'active',
+        confirm: 'active'
+      }[action];
+      try {
+        incremental = await refreshSnapshotBug(bugId, expectedStatus);
+      } catch (error) {
+        console.error(`[QDesk] 单条 Bug 刷新失败（#${bugId}）：`, error.message);
+      }
+    }
+    if (!incremental) triggerSync({ force: true, reason: `bug-${action}` });
+    const actionLabels = {
+      resolve: '标记为解决',
+      close: '关闭',
+      activate: '激活',
+      confirm: '确认',
+      assign: '指派',
+      delete: '删除'
+    };
+    sendJson(res, 200, {
+      ok: true,
+      data: {
+        id: bugId,
+        action,
+        message: incremental
+          ? `Bug #${bugId} 已${actionLabels[action]}。`
+          : `Bug #${bugId} 已${actionLabels[action]}，正在从禅道重新同步。`,
+        incremental,
+        refreshRequired: !incremental
       }
     });
     return;
@@ -1370,6 +2012,36 @@ async function handleApi(req, res, url) {
     const body = await readJsonBody(req, 64 * 1024);
     const settings = store.updateSettings(body);
     sendJson(res, 200, { ok: true, data: { settings } });
+    return;
+  }
+
+  const fileMatch = pathname.match(/^\/api\/zentao\/file\/(\d{1,12})$/);
+  if (fileMatch && req.method === 'GET') {
+    try {
+      await serveZentaoFile(req, res, fileMatch[1]);
+    } catch (error) {
+      console.error('[QDesk] 读取禅道附件失败：', error.message);
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          ok: false,
+          error: { message: '读取禅道附件失败，请检查网络或重新保存禅道连接。' }
+        });
+      }
+    }
+    return;
+  }
+  if (pathname === '/api/zentao/file' && req.method === 'GET') {
+    try {
+      await serveZentaoFile(req, res, url.searchParams.get('id') || url.searchParams.get('fileID'));
+    } catch (error) {
+      console.error('[QDesk] 读取禅道附件失败：', error.message);
+      if (!res.headersSent) {
+        sendJson(res, 502, {
+          ok: false,
+          error: { message: '读取禅道附件失败，请检查网络或重新保存禅道连接。' }
+        });
+      }
+    }
     return;
   }
 
@@ -1421,8 +2093,8 @@ function start() {
     console.log('');
     console.log('  QDesk · 测试工作台');
     console.log(`  本地地址: http://${config.server.host === '0.0.0.0' ? '127.0.0.1' : config.server.host}:${config.server.port}`);
-    console.log(`  禅道账号: ${config.tester.account}（只读同步，Bug 创建除外）`);
-    console.log(`  同步范围: 账号可访问的全部产品与项目 · 后台静默同步（${config.zentao.cacheSeconds}s）`);
+    console.log(`  禅道账号: ${config.tester.account}（同步读取；Bug 创建、编辑与状态流转通过 CLI 写入）`);
+    console.log(`  同步范围: 账号可访问的全部产品与项目 · 自动全量同步 ${config.zentao.syncTimes.join(' / ')}（本地时间），其余时间仅手动或单条更新`);
     if (snapshot) {
       console.log(`  已载入缓存: ${snapshot.sync ? snapshot.sync.lastSyncAt : '未知时间'}`);
     } else {
@@ -1453,6 +2125,10 @@ module.exports = {
   getSnapshot,
   buildSnapshot,
   triggerSync,
+  scheduledSyncAt,
+  refreshSnapshotBug,
+  applyBugToSnapshot,
+  removeBugFromSnapshot,
   currentSyncState,
   emptySnapshot,
   loadSnapshotCache,

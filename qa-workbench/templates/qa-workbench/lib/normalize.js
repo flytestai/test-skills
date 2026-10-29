@@ -58,9 +58,11 @@ const RESOLUTIONS = {
   duplicate: '重复 Bug',
   bydesign: '设计如此',
   wontfix: '不予修复',
+  willnotfix: '不予解决',
   external: '外部原因',
   postponed: '延期处理',
-  notrepro: '无法重现'
+  notrepro: '无法重现',
+  tostory: '转为需求'
 };
 
 const FEATURE_RULES = [
@@ -328,8 +330,16 @@ function normalizeBug(raw, context) {
     typeLabel: BUG_TYPES[String(bug.type || 'others')] || '其他',
     project: text(ctx.productName || '禅道产品', 80),
     productId: String(bug.product || ctx.productId || ''),
+    projectId: String(bug.project || ''),
+    executionId: String(bug.execution || ''),
     moduleId: String(bug.module == null ? '0' : bug.module),
     module: moduleLabel(bug.module, moduleNames),
+    storyId: String(bug.story && String(bug.story) !== '0' ? bug.story : ''),
+    keywords: text(bug.keywords || '', 200),
+    os: String(bug.os || ''),
+    browser: String(bug.browser || ''),
+    hardware: String(bug.hardware || ''),
+    deadline: toIso(bug.deadline),
     feature,
     businessCategory: businessCategory(bug.title, feature),
     version: text(bug.openedBuild || '', 60),

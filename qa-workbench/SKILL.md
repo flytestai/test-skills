@@ -14,7 +14,7 @@ Deploy a self-contained local test workbench. The template is a vanilla HTML/CSS
 - **Bugs**: per-product groups; read scope is the union of Bugs opened by the account and assigned to the account. Write scope is stricter: only Bugs whose `assignedTo` is the current account may be changed. Sortable by created time and updated time (newest update first by default).
 - **Customer-feedback watch**: detects Bugs opened by the configured AI/autojob account (default `autojob`) that the current account handled, and shows unresolved, pending-verification and closed counts on the dashboard. It highlights P0/P1 items, lists daily follow-ups, and labels the source as AI-extracted customer-service chat. The source is usually a customer-service group chat where AI extracts customer complaints into ZenTao Bugs. Write scope is unchanged: follow-up reads are broad, but any Bug edit still requires `assignedTo` to be the current account.
 - **Reports**: daily report draft generated from the day's tasks and Bugs, with Markdown copy and exports.
-- **Background sync**: the page renders the last local snapshot immediately; ZenTao sync runs silently in the background.
+- **Scheduled and incremental sync**: the page renders the last local snapshot immediately. A full sync runs only at the configured daily times (default 08:30 / 12:00 / 17:00 local time) or when the user clicks sync; Bug edits and status changes refresh just that one Bug via `zentao bug <id>` without a full sync.
 - **Connection setup**: only URL, account, password and display name. Product IDs and project IDs are discovered automatically.
 - **Local-only security**: binds `127.0.0.1`; passwords are never returned by the API.
 
@@ -79,7 +79,7 @@ The optional `watch` block tracks Bugs created by an AI customer-service account
 - The watch counts only Bugs related to the current account: actively assigned to it, resolved by it, or closed by it. Closed Bugs lose their original `assignedTo`, so `resolvedBy` / `closedBy` are used as the ownership signal.
 - `browseType=closed` and `closedbyme` return empty on some ZenTao versions, so the scan uses `browseType=all` per configured product and filters by `openedBy` locally. The autojob scan is cached separately for 15 minutes.
 - Environment overrides: `QDESK_AUTOJOB_ACCOUNTS=autojob` and `QDESK_AUTOJOB_PRODUCTS=53,55`.
-- The dashboard shows unresolved (active), pending verification (resolved), closed, and high-priority (P0/P1) counts. The workbench also adds these items to the daily report and notification bell.
+- The dashboard shows unresolved (active), resolved-by-me, closed, and high-priority (P0/P1) counts. Resolved items assigned back to the reporter or autojob are not counted as my pending verification. The workbench also adds unresolved items to the daily report and notification bell.
 
 ### 3. Verify the template before starting
 
@@ -146,7 +146,7 @@ Remove with `uninstall-autostart.ps1`. If the port is not `4173`, use the instal
 
 ## Operating rules
 
-- **Read-only by default.** Existing tasks and Bugs must not be edited, deleted, or transitioned through this workbench.
+- **Read-only by default.** Existing tasks must not be edited, deleted, or transitioned through this workbench. Bug writes are explicit user actions only.
 - **Only operate on your own Bugs.** Any Bug edit, close, resolve, activate, or batch transition must be limited to Bugs whose `assignedTo` is the current account. A Bug opened by the account but assigned to someone else is out of scope. A closed Bug stores `assignedTo=closed`, so its previous owner cannot be proven from the current field.
 - **Batch close needs a confirmation list.** Before closing multiple Bugs, generate a read-only list (Bug ID, title, current status) filtered by `assignedTo`, present it to the user, and wait for an explicit "confirm/execute" reply. Close only the confirmed IDs; never include Bugs outside the list. Default cap is 100; require explicit approval to exceed it.
 - **Verify after writing.** Re-read status and assignee for every changed ID, then report success, failure, and skipped items separately.
@@ -214,7 +214,7 @@ node scripts/plan-bulk-close.mjs --product 13 --status resolved --output close-p
 - [ ] Service responds on `127.0.0.1:<port>`.
 - [ ] First background sync completes without `lastError`.
 - [ ] User knows how to open the connection form and that product/project IDs are not required.
-- [ ] User knows existing ZenTao records are read-only.
-- [ ] User knows any Bug write is limited to Bugs assigned to the current account, and bulk close requires a confirmed list.
+- [ ] User knows existing tasks are read-only, while Bugs assigned to the current account can be edited and moved through ZenTao status actions via the CLI; other users' Bugs are off-limits.
+- [ ] User knows batch close requires a confirmed list and that every write must be re-read and verified.
 - [ ] The dashboard shows the customer-feedback watch counts (unresolved / pending verification / closed / P0-P1), or the user explicitly disabled `watch.enabled`.
 - [ ] If auto-start was requested, the scheduled task exists and starts the service.

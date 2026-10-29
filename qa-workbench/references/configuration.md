@@ -117,6 +117,8 @@ This intentionally avoids the ZenTao 22.4 unsupported `my tasks`, `my bugs`, `bu
 - The first sync starts about 600 ms after server startup when no fresh snapshot exists.
 - `/api/sync` triggers a background refresh and returns immediately.
 - A failed sync keeps the previous snapshot and retries after roughly 60 seconds.
+- An expired login (`AUTH_EXPIRED`) retries after 10 minutes. If a password is saved, the CLI logs in again and refreshes the token automatically; no manual step is needed.
+- Each background sync is bounded at 15 minutes.
 - List-level caches (products/projects/executions) are in memory; the full last successful snapshot is persisted.
 - The customer-feedback scan is cached for 15 minutes independently of the main snapshot. A manual sync (`force`) refreshes it; normal page refreshes reuse the cache.
 - Scanning all products for `browseType=all` is the slowest part of the first sync. Set `watch.productIds` to the products that actually receive AI customer-service Bugs (for example `[53, 55]`) to shorten it.

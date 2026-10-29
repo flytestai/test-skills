@@ -10,6 +10,7 @@ const {
   parseSeverityInput,
   scopeBugs,
   scopeTasks,
+  scheduledSyncAt,
   createHttpServer
 } = require('../server');
 const {
@@ -102,6 +103,21 @@ test('parseSeverityInput supports P labels and raw priorities', () => {
   assert.equal(parseSeverityInput('0'), '');
   assert.equal(parseSeverityInput('P4'), '');
   assert.equal(parseSeverityInput(''), '');
+});
+
+test('scheduledSyncAt picks the next daily sync slot', () => {
+  const morning = scheduledSyncAt(new Date(2026, 9, 29, 8, 0, 0));
+  assert.equal(morning.getHours(), 8);
+  assert.equal(morning.getMinutes(), 30);
+
+  const noon = scheduledSyncAt(new Date(2026, 9, 29, 9, 30, 0));
+  assert.equal(noon.getHours(), 12);
+  assert.equal(noon.getMinutes(), 0);
+
+  const evening = scheduledSyncAt(new Date(2026, 9, 29, 18, 0, 0));
+  assert.equal(evening.getDate(), 30);
+  assert.equal(evening.getHours(), 8);
+  assert.equal(evening.getMinutes(), 30);
 });
 
 test('scope filters keep Bug and task counts consistent', () => {

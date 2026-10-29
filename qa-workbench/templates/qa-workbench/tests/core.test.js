@@ -104,8 +104,11 @@ test('筛选器支持关键词、优先级、项目和逾期条件', () => {
   const projectTasks = Core.filterTasks(state.tasks, { project: '交易系统', status: 'doing' });
   assert.deepEqual(projectTasks.map((task) => task.id), ['T-1006']);
 
-  const overdue = Core.filterTasks(state.tasks, { due: 'overdue' });
+  const overdue = Core.filterTasks(state.tasks, { due: 'overdue', date: FIXED_DATE });
   assert.equal(overdue.length, 0);
+
+  const dueToday = Core.filterTasks(state.tasks, { due: 'today', date: FIXED_DATE });
+  assert.equal(dueToday.length, 4);
 
   const p0Bugs = Core.filterBugs(state.bugs, { severity: 'P0' });
   assert.deepEqual(p0Bugs.map((bug) => bug.id), ['BUG-1183']);
@@ -179,10 +182,41 @@ test('recentActivity 按时间倒序返回活动', () => {
   assert.ok(activity.some((item) => item.kind === 'bug'));
 });
 
-test('linkifyText 将纯文本链接转为可点击安全链接', () => {
-  const html = Core.linkifyText('查看企微原文链接: https://wecom-ai-alarm.integrity.com.cn/chatRecord?RequestId=2115300516902121472');
+test('renderRichText parses ZenTao Markdown, lists and file images', () => {
+  const source = '**现象**：列表不同步\n\n复现步骤：\n1\\. 打开弹窗；\n2\\. 提交计划。\n\n![原图](/zentao/index.php?m=file&f=read&t=png&fileID=14533)';
+  const html = Core.renderRichText(source);
+  assert.match(html, /<strong>现象<\/strong>/);
+  assert.match(html, /<ol><li>打开弹窗；<\/li><li>提交计划。<\/li><\/ol>/);
+  assert.match(html, /src="\/api\/zentao\/file\/14533"/);
+  assert.match(html, /<figcaption>原图<\/figcaption>/);
+  assert.doesNotMatch(html, /<\/p>\s*<figure/);
+});
+
+test('renderRichText sanitizes HTML and resolves ZenTao image URLs', () => {
+  const html = Core.renderRichText('<p onclick="x()">说明<img src="{14534.png}" onerror="evil()" alt="局部"></p><script>alert(1)</script>');
+  assert.match(html, /<p>说明/);
+  assert.match(html, /src="\/api\/zentao\/file\/14534"/);
+  assert.match(html, /alt="局部"/);
+  assert.doesNotMatch(html, /onclick|onerror|script|alert/);
+});
+
+test('renderRichText turns bare URLs into clickable links without nesting', () => {
+  const html = Core.renderRichText('查看企微原文链接: https://wecom-ai-alarm.integrity.com.cn/chatRecord?RequestId=2115300516902121472');
   assert.match(html, /<a href="https:\/\/wecom-ai-alarm\.integrity\.com\.cn\/chatRecord\?RequestId=2115300516902121472" target="_blank" rel="noopener noreferrer">/);
   assert.match(html, /查看企微原文链接/);
-  assert.doesNotMatch(Core.linkifyText('<script>alert(1)</script>'), /<script>/);
-  assert.doesNotMatch(Core.linkifyText('javascript:alert(1)'), /<a /);
+  const markdown = Core.renderRichText('见 [原文](https://example.com/a?b=1&amp;c=2)');
+  assert.equal((markdown.match(/<a /g) || []).length, 1);
+  const code = Core.renderRichText('`https://example.com/code` 与 https://example.com/ok');
+  assert.equal((code.match(/<a /g) || []).length, 1);
+});
+
+test('extractAttachments returns unique ZenTao file references', () => {
+  const files = Core.extractAttachments([
+    '![原图]({14533.png})',
+    '![重复]({14533.png})',
+    '![放大](/zentao/index.php?m=file&f=read&t=png&fileID=14534)'
+  ]);
+  assert.deepEqual(files.map((item) => item.id), ['14533', '14534']);
+  assert.equal(files[0].url, '/api/zentao/file/14533');
+  assert.equal(files[1].alt, '放大');
 });

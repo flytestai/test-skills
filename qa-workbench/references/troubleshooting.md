@@ -37,6 +37,26 @@ Authentication problems.
 
 Never ask the user to paste a password into the chat; use the workbench form or their own terminal.
 
+## Login expired (`AUTH_EXPIRED`, HTTP 302)
+
+When the ZenTao token expires, the CLI follows a 302 redirect to the login page. QDesk reports this as `AUTH_EXPIRED` instead of the raw redirect.
+
+- If a password is saved in `data/zentao-auth.json`, QDesk passes URL, account and password to the CLI. The CLI then logs in again automatically and writes a fresh token; the next sync usually recovers without any action.
+- While waiting for that retry, `/api/health` keeps the old snapshot and exposes `lastErrorCode: "AUTH_EXPIRED"`. The retry interval is 10 minutes instead of 60 seconds to avoid repeated failed logins.
+- If recovery does not happen, open **偏好与数据 → 配置禅道连接**, click **测试连接**, then **保存并同步** to re-save the password. Or run `zentao login` in your own terminal.
+- Saving the connection again is the only required step after a password change.
+
+## Connection test seems to run forever
+
+The test has bounded timeouts: 20 seconds per CLI call and a 30-second server deadline. The page aborts its request after 35 seconds, so a result or a timeout message always appears.
+
+- A timeout means the network, ZenTao URL, or credentials did not respond in time.
+- `请求超时` / `连接测试超时`: check the URL and network reachability first.
+- `当前用户名和密码不正确`: the credentials are wrong; re-enter them.
+- Stray `UV_HANDLE_CLOSING` assertion lines from the CLI are filtered out of user-facing messages.
+
+Background sync is also bounded at 15 minutes per run, so a stuck CLI call cannot block the scheduler indefinitely.
+
 ## `E2010` on `my tasks` / `my bugs`
 
 ZenTao 22.4 does not support these commands. The workbench already avoids them:

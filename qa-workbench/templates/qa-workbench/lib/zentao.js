@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 
 class ZentaoError extends Error {
   constructor(message, options) {
@@ -61,6 +61,53 @@ function resolveCommand(configuredPath) {
   );
 }
 
+function terminateChild(child) {
+  if (!child || !child.pid) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore'
+      });
+      return;
+    } catch (error) {
+      // Fall through to the portable kill below.
+    }
+  }
+  try { child.kill('SIGKILL'); } catch (error) { /* noop */ }
+}
+
+function isAuthExpired(value) {
+  const text = String(value || '');
+  return /Status[：:]\s*302/.test(text)
+    || /"status"\s*:\s*302/.test(text)
+    || /Status[：:]\s*401/.test(text)
+    || /"status"\s*:\s*401/.test(text);
+}
+
+function cleanCliText(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .filter((line) => !/Assertion failed:.*UV_HANDLE_CLOSING/i.test(line))
+    .join('\n')
+    .trim();
+}
+
+function extractCliMessage(value) {
+  const text = cleanCliText(value);
+  const start = text.indexOf('{');
+  if (start >= 0) {
+    try {
+      const parsed = JSON.parse(text.slice(start));
+      if (parsed && parsed.error && parsed.error.message) return String(parsed.error.message);
+      if (parsed && parsed.message) return String(parsed.message);
+    } catch (error) {
+      // Fall back to the cleaned text below.
+    }
+  }
+  return text;
+}
+
 function parseJsonOutput(stdout) {
   const text = String(stdout || '').trim();
   if (!text) return null;
@@ -114,7 +161,7 @@ function runCli(args, options) {
     };
 
     timer = setTimeout(() => {
-      try { child.kill(); } catch (error) { /* noop */ }
+      terminateChild(child);
       finish(reject, new ZentaoError(`禅道 CLI 执行超时（${Math.round(timeoutMs / 1000)} 秒）。`, {
         code: 'CLI_TIMEOUT'
       }));
@@ -123,7 +170,7 @@ function runCli(args, options) {
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString('utf8');
       if (stdout.length > 20 * 1024 * 1024) {
-        try { child.kill(); } catch (error) { /* noop */ }
+        terminateChild(child);
         finish(reject, new ZentaoError('禅道 CLI 返回内容过大。', { code: 'CLI_OUTPUT_TOO_LARGE' }));
       }
     });
@@ -148,7 +195,14 @@ function runCli(args, options) {
       }
       if (parsed && parsed.error) {
         const error = parsed.error;
-        finish(reject, new ZentaoError(error.message || '禅道请求失败。', {
+        if (isAuthExpired(error.message) || isAuthExpired(error.details && error.details.status)) {
+          finish(reject, new ZentaoError(
+            '禅道登录已失效（服务端返回 302 跳转到登录页）。请打开 QDesk 的「配置禅道连接」重新输入密码并保存，或运行 zentao login 重新登录。',
+            { code: 'AUTH_EXPIRED', details: error.details || null, exitCode }
+          ));
+          return;
+        }
+        finish(reject, new ZentaoError(cleanCliText(error.message) || '禅道请求失败。', {
           code: error.code || 'ZENTAO_API_ERROR',
           details: error.details || null,
           exitCode
@@ -156,12 +210,20 @@ function runCli(args, options) {
         return;
       }
       if (exitCode !== 0) {
+        const stderrText = cleanCliText(stderr);
         const message = (parsed && (parsed.message || parsed.error && parsed.error.message))
-          || stderr.trim()
+          || extractCliMessage(stderrText)
           || `禅道 CLI 退出码 ${exitCode}。`;
-        finish(reject, new ZentaoError(message, {
+        if (isAuthExpired(message) || isAuthExpired(stderrText)) {
+          finish(reject, new ZentaoError(
+            '禅道登录已失效（服务端返回 302 跳转到登录页）。请打开 QDesk 的「配置禅道连接」重新输入密码并保存，或运行 zentao login 重新登录。',
+            { code: 'AUTH_EXPIRED', details: trimOutput(stderrText), exitCode }
+          ));
+          return;
+        }
+        finish(reject, new ZentaoError(cleanCliText(message), {
           code: 'CLI_EXIT_ERROR',
-          details: trimOutput(stderr),
+          details: trimOutput(stderrText),
           exitCode
         }));
         return;
@@ -265,7 +327,7 @@ async function listTasks(executionId, options) {
 }
 
 const BUG_FIELDS = [
-  'id', 'project', 'product', 'module', 'execution', 'task', 'title', 'keywords',
+  'id', 'project', 'product', 'module', 'execution', 'task', 'story', 'title', 'keywords',
   'severity', 'pri', 'type', 'os', 'browser', 'hardware', 'found', 'steps', 'status',
   'confirmed', 'openedBy', 'openedDate', 'openedBuild', 'assignedTo', 'assignedDate',
   'deadline', 'resolvedBy', 'resolution', 'resolvedDate', 'closedBy', 'closedDate',
@@ -308,6 +370,57 @@ async function getBug(bugId, options) {
   return runJson(['bug', String(bugId), '--format=json'], options);
 }
 
+function pushOption(args, name, value) {
+  if (value == null || value === '') return;
+  args.push(`--${name}=${value}`);
+}
+
+async function updateBug(bugId, input, options) {
+  const bug = input || {};
+  const args = ['bug', 'update', String(bugId)];
+  pushOption(args, 'title', bug.title);
+  pushOption(args, 'severity', bug.severity);
+  pushOption(args, 'pri', bug.pri);
+  pushOption(args, 'type', bug.type);
+  pushOption(args, 'openedBuild', bug.openedBuild);
+  pushOption(args, 'steps', bug.steps);
+  if (bug.project !== undefined) pushOption(args, 'project', bug.project);
+  if (bug.execution !== undefined) pushOption(args, 'execution', bug.execution);
+  if (bug.story !== undefined) pushOption(args, 'story', bug.story);
+  pushOption(args, 'assignedTo', bug.assignedTo);
+  args.push('--format=json');
+  return runJson(args, options);
+}
+
+async function bugAction(action, bugId, input, options) {
+  const data = input || {};
+  const args = ['bug', String(action), String(bugId)];
+  if (action === 'resolve') {
+    pushOption(args, 'resolution', data.resolution);
+    pushOption(args, 'resolvedBuild', data.resolvedBuild);
+    pushOption(args, 'assignedTo', data.assignedTo);
+    pushOption(args, 'comment', data.comment);
+  } else if (action === 'close') {
+    pushOption(args, 'comment', data.comment);
+  } else if (action === 'activate') {
+    pushOption(args, 'openedBuild', data.openedBuild);
+    pushOption(args, 'assignedTo', data.assignedTo);
+    pushOption(args, 'comment', data.comment);
+  } else if (action === 'confirm') {
+    pushOption(args, 'assignedTo', data.assignedTo);
+    pushOption(args, 'type', data.type);
+    pushOption(args, 'pri', data.pri);
+    pushOption(args, 'deadline', data.deadline);
+    pushOption(args, 'comment', data.comment);
+  } else if (action === 'delete') {
+    args.push('--yes');
+  } else {
+    throw new ZentaoError('不支持的 Bug 操作。', { code: 'INVALID_ACTION' });
+  }
+  args.push('--format=json');
+  return runJson(args, options);
+}
+
 module.exports = {
   ZentaoError,
   resolveCommand,
@@ -323,5 +436,7 @@ module.exports = {
   listTasks,
   listBugs,
   createBug,
-  getBug
+  getBug,
+  updateBug,
+  bugAction
 };

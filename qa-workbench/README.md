@@ -17,13 +17,11 @@
 
 ## 安全边界
 
-- 已有任务和 Bug 默认只读，不会被自动关闭、解决或改派。
-- 如需执行 Bug 写操作，仅限 `assignedTo` 为当前账号的 Bug；我提交但已指派给他人的不算。
+- 已有任务只读；Bug 写操作只允许针对 `assignedTo` 为当前账号的记录。
+- 我提交但已指派给他人的 Bug 不能修改；已关闭 Bug 的 `assignedTo` 会变成 `closed`，归属必须在关闭前确认。
 - 批量关闭前必须先只读生成清单并让用户确认，只关闭清单内的 ID；默认超过 100 条会拦截。
-- 已关闭 Bug 的 `assignedTo` 会变为 `closed`，归属必须在关闭前确认。
-- 操作后逐条复核状态，分别报告成功、失败、跳过项。
-
-配套的只读校验和清单工具见 `scripts/check-bug-owner.mjs` 与 `scripts/plan-bulk-close.mjs`，完整流程见 `references/safety.md`。
+- 每次写入后逐条复核状态和指派人，分别报告成功、失败、跳过项。
+- 配套的只读校验和清单工具见 `scripts/check-bug-owner.mjs` 与 `scripts/plan-bulk-close.mjs`，完整流程见 `references/safety.md`。
 
 ## 安装
 

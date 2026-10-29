@@ -10,6 +10,7 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | GET | `/api/connection` | Current connection mask; never includes a password |
 | POST | `/api/zentao/test` | Validate form values and probe accessible products/projects; does not save |
 | POST | `/api/zentao/connection` | Validate, save locally, return current snapshot, start background sync |
+| GET | `/api/zentao/file/:id` | Proxy a ZenTao image attachment through the local service; only raster images, credentials stay server-side |
 | GET | `/api/bootstrap` | Return the current snapshot immediately; may trigger a background refresh |
 | GET | `/api/bootstrap?meta=1` | Compact sync state and counts only; use for polling |
 | GET | `/api/bootstrap?refresh=1` | Return current snapshot and trigger a background refresh |
@@ -17,12 +18,35 @@ All endpoints are served by `server.js` on the configured local host. JSON write
 | GET | `/api/bugs?scope=opened\|assigned\|autojob\|all` | Bug list and stats for the requested scope |
 | GET | `/api/bugs/stats?scope=…` | Bug classification stats and scope totals |
 | POST | `/api/bugs` | Create a formal ZenTao Bug through the CLI |
+| POST | `/api/bugs/:id/refresh` | Re-read one Bug and update the in-memory snapshot in place; no full sync |
+| PUT / PATCH | `/api/bugs/:id` | Update CLI-supported Bug fields |
+| POST | `/api/bugs/:id/assign` | Assign the Bug to a ZenTao account |
+| POST | `/api/bugs/:id/resolve` | Resolve the Bug with resolution, build, assignee and comment |
+| POST | `/api/bugs/:id/close` | Close the Bug with an optional comment |
+| POST | `/api/bugs/:id/activate` | Re-activate the Bug with build, assignee and comment |
+| POST | `/api/bugs/:id/confirm` | Confirm the Bug (ZenTao 22.5+ only) |
+| POST | `/api/bugs/:id/delete` | Delete the Bug through the CLI (`--yes`) |
 | GET | `/api/tasks?scope=mine\|test\|all` | Task list and stats |
 | GET | `/api/reports` | Stored daily reports |
 | POST | `/api/reports` | Create or update one report |
 | POST | `/api/settings` | Update display profile and UI preferences |
 
 Static files are limited to `/`, `/index.html`, `/styles.css`, `/core.js`, `/app.js`. `config.json`, `data/`, `lib/`, `server.js` and tests are not exposed.
+
+## Bug write payloads
+
+`PUT /api/bugs/:id` accepts any subset of `title`, `severity` (`P0`–`P3`), `pri` (`P0`–`P3`), `type`, `openedBuild`, `project` (ID), `execution` (ID), `story` (ID), `assignedTo` (account) and `steps`. The server validates values, calls `zentao bug update`, then triggers a forced background sync.
+
+Action payloads:
+
+- `assign`: `{ assignedTo }` (required).
+- `resolve`: `{ resolution, resolvedBuild, assignedTo, comment }`.
+- `close`: `{ comment }`.
+- `activate`: `{ openedBuild, assignedTo, comment }`.
+- `confirm`: `{ assignedTo, type, pri, deadline, comment }`; requires ZenTao 22.5+.
+- `delete`: no fields; runs `zentao bug delete <id> --yes`.
+
+All action responses contain `{ ok: true, data: { id, action, message, incremental, refreshRequired } }`. After a successful write the server calls `zentao bug <id>` for that one Bug, re-normalizes it, updates the in-memory snapshot, recalculates Bug/autojob statistics, increments `revision` and writes the snapshot cache. `incremental: true` and `refreshRequired: false` mean the next `/api/bootstrap` already has the new state; a full sync is started only when the single-Bug read fails. ZenTao 22.4 does not support `bug confirm`, and its `bug update` CLI does not accept product or module changes.
 
 ## Health example
 
@@ -49,7 +73,9 @@ Important fields:
 3. When `revision` changes, fetch `/api/bootstrap` and render the new data.
 4. After a manual sync, poll until `syncing` becomes false and `revision` changes.
 
-Do not call `/api/bootstrap?refresh=1` in a loop; it starts a background sync and returns the old snapshot.
+Do not call `/api/bootstrap?refresh=1` in a loop; it starts a background sync and returns the old snapshot. Normal `/api/bootstrap` and `/api/bootstrap?meta=1` never start a full sync when a snapshot exists. Full syncs run only at `zentao.syncTimes` (default 08:30 / 12:00 / 17:00 local time), on an explicit `/api/sync`, or when no snapshot exists yet.
+
+`syncState` includes `schedule` (configured daily sync times) and `nextSyncAt` (next scheduled full sync, ISO timestamp). `cacheSeconds` still controls the displayed `stale` flag but no longer triggers a sync.
 
 ## Manual sync
 
@@ -100,7 +126,13 @@ HTTP 202 response contains `started` and the current `syncState`. The request ne
     "severities": []
   },
   "sync": { "lastSyncAt": "...", "durationMs": 0, "counts": {} },
-  "syncState": { "syncing": false, "stale": false, "revision": 1 },
+  "syncState": {
+    "syncing": false,
+    "stale": false,
+    "schedule": ["08:30", "12:00", "17:00"],
+    "nextSyncAt": "2026-10-29T09:00:00.000Z",
+    "revision": 1
+  },
   "generatedAt": "..."
 }
 ```
@@ -150,7 +182,9 @@ All JSON files use temporary files plus atomic rename. Corrupt files are moved t
 - Errors are sanitized by replacing the password with a placeholder.
 - Credentials are passed to the CLI through a child-process environment, not shell interpolation.
 - Static whitelist, CSP, `X-Frame-Options: DENY`, same-origin checks and body-size limits are enabled.
-- Existing ZenTao tasks and Bugs are read-only through the workbench.
+- Existing ZenTao tasks are read-only. Existing Bugs can be updated, assigned, resolved, closed, activated, confirmed (22.5+) and deleted through the ZenTao CLI only when `assignedTo` is the current account.
+- Batch close requires a read-only confirmation list and explicit user approval; only the confirmed IDs may be processed. See `references/safety.md`.
+- After every write, re-read the affected Bug and report success, failure, and skipped items separately.
 
 ## Reset behavior
 
