@@ -1725,16 +1725,22 @@
     const expected = bug.expected ? Core.renderRichText(bug.expected) : '';
     const actual = bug.actual ? Core.renderRichText(bug.actual) : '';
     return `<div class="bug-detail-page">
+      <div class="bug-detail-float-nav" role="group" aria-label="切换 Bug">
+        <button class="bug-detail-float-btn" type="button" data-action="bug-prev"${nav.previous ? '' : ' disabled'} title="上一个 Bug（←）" aria-label="上一个 Bug">
+          <span class="bug-detail-float-icon">${icon('chevron-left')}</span>
+          <span class="bug-detail-float-label">上一个</span>
+        </button>
+        <button class="bug-detail-float-btn" type="button" data-action="bug-next"${nav.next ? '' : ' disabled'} title="下一个 Bug（→）" aria-label="下一个 Bug">
+          <span class="bug-detail-float-icon">${icon('chevron-right')}</span>
+          <span class="bug-detail-float-label">下一个</span>
+        </button>
+      </div>
       <div class="bug-detail-topbar">
         <button class="bug-detail-back" type="button" data-action="close-bug-page">
           ${icon('chevron-left')}<span>返回 Bug 列表</span>
         </button>
         <div class="bug-detail-topbar-actions">
-          <div class="bug-detail-nav" role="group" aria-label="切换 Bug">
-            <button class="bug-detail-nav-btn" type="button" data-action="bug-prev"${nav.previous ? '' : ' disabled'} title="上一个 Bug（←）" aria-label="上一个 Bug">${icon('chevron-left')}</button>
-            <span class="bug-detail-nav-position" title="当前列表位置">${esc(navPosition)}</span>
-            <button class="bug-detail-nav-btn" type="button" data-action="bug-next"${nav.next ? '' : ' disabled'} title="下一个 Bug（→）" aria-label="下一个 Bug">${icon('chevron-right')}</button>
-          </div>
+          <span class="bug-detail-position" title="当前列表位置" aria-live="polite">${esc(navPosition || '—')}</span>
           <span class="bug-detail-number">${esc(bug.displayId || '#' + bug.id)}</span>
           ${bug.url ? `<a class="btn btn-sm" href="${esc(bug.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
           <button class="btn btn-sm btn-primary" type="button" data-action="edit-bug-page" data-id="${esc(bug.id)}">${icon('edit')}编辑 Bug</button>
