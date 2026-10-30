@@ -1505,6 +1505,31 @@
     return sortBugs(bugs);
   }
 
+  function bugNavigation(bugId) {
+    const currentId = String(bugId || (ui && ui.bugDetailId) || '');
+    const indexIn = (list) => list.findIndex((bug) => String(bug.id) === currentId);
+    let list = filteredBugs();
+    let index = indexIn(list);
+    if (index < 0) {
+      list = sortBugs(visibleBugs());
+      index = indexIn(list);
+    }
+    if (index < 0) {
+      const all = (state.allBugs || []).slice();
+      (state.autojobBugs || []).forEach((bug) => {
+        if (!all.some((item) => String(item.id) === String(bug.id))) all.push(bug);
+      });
+      list = sortBugs(all);
+      index = indexIn(list);
+    }
+    return {
+      list,
+      index,
+      previous: index > 0 ? list[index - 1] : null,
+      next: index >= 0 && index < list.length - 1 ? list[index + 1] : null
+    };
+  }
+
   function bugSortHeader(key, label) {
     const active = ui.bugSort && ui.bugSort.key === key;
     const dir = active ? ui.bugSort.dir : '';
@@ -1691,6 +1716,8 @@
 
   function renderBugPage(bug) {
     const task = bug.taskId ? taskById(bug.taskId) : null;
+    const nav = bugNavigation(bug.id);
+    const navPosition = nav.index >= 0 ? `${nav.index + 1} / ${nav.list.length}` : '';
     const stepSource = stepsWithoutResults(bug);
     const steps = Core.renderRichText(stepSource || '禅道中没有填写复现步骤。');
     const expected = bug.expected ? Core.renderRichText(bug.expected) : '';
@@ -1701,6 +1728,11 @@
           ${icon('chevron-left')}<span>返回 Bug 列表</span>
         </button>
         <div class="bug-detail-topbar-actions">
+          <div class="bug-detail-nav" role="group" aria-label="切换 Bug">
+            <button class="bug-detail-nav-btn" type="button" data-action="bug-prev"${nav.previous ? '' : ' disabled'} title="上一个 Bug（←）" aria-label="上一个 Bug">${icon('chevron-left')}</button>
+            <span class="bug-detail-nav-position" title="当前列表位置">${esc(navPosition)}</span>
+            <button class="bug-detail-nav-btn" type="button" data-action="bug-next"${nav.next ? '' : ' disabled'} title="下一个 Bug（→）" aria-label="下一个 Bug">${icon('chevron-right')}</button>
+          </div>
           <span class="bug-detail-number">${esc(bug.displayId || '#' + bug.id)}</span>
           ${bug.url ? `<a class="btn btn-sm" href="${esc(bug.url)}" target="_blank" rel="noopener noreferrer">${icon('link')}在禅道打开</a>` : ''}
           <button class="btn btn-sm btn-primary" type="button" data-action="edit-bug-page" data-id="${esc(bug.id)}">${icon('edit')}编辑 Bug</button>
@@ -2596,6 +2628,17 @@
       renderView(true);
       window.scrollTo({ top: 0, behavior: 'auto' });
     }
+  }
+
+  function openAdjacentBug(direction) {
+    if (!guardReady() || !ui.bugDetailId || ui.bugEditing) return;
+    const nav = bugNavigation(ui.bugDetailId);
+    const target = direction === 'prev' ? nav.previous : nav.next;
+    if (!target) {
+      showToast(direction === 'prev' ? '已经是第一个 Bug。' : '已经是最后一个 Bug。', 'warn');
+      return;
+    }
+    openBugPage(target.id);
   }
 
   function closeBugPage() {
@@ -3896,6 +3939,8 @@
     if (action === 'report-today') { ui.reportDate = Core.localDate(); closeNotifications(); navigate('reports'); return; }
     if (action === 'open-task') { openTaskDrawer(actionEl.dataset.id); return; }
     if (action === 'open-bug') { openBugPage(actionEl.dataset.id); return; }
+    if (action === 'bug-prev') { openAdjacentBug('prev'); return; }
+    if (action === 'bug-next') { openAdjacentBug('next'); return; }
     if (action === 'close-bug-page') { closeBugPage(); return; }
     if (action === 'edit-bug-page') { openBugEdit(actionEl.dataset.id); return; }
     if (action === 'close-bug-edit') { closeBugEdit(); return; }
@@ -4220,6 +4265,21 @@
       if (event.key === 'Enter') { event.preventDefault(); runCommand(commandIndex); return; }
       if (event.key === 'Escape') { event.preventDefault(); closeCommand(); return; }
       if (event.key === 'Tab') { event.preventDefault(); return; }
+    }
+    const typing = event.target.closest
+      && event.target.closest('input, textarea, select, [contenteditable="true"]');
+    if (!commandOpen && !typing && ui && ui.view === 'bugs' && ui.bugDetailId && !ui.bugEditing
+      && !$('#modal-root').firstElementChild && !$('#drawer-root').firstElementChild) {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        openAdjacentBug('prev');
+        return;
+      }
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        openAdjacentBug('next');
+        return;
+      }
     }
     const kpiCard = event.target.closest('.kpi-card[data-action]');
     if (kpiCard && (event.key === 'Enter' || event.key === ' ')) {

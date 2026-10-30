@@ -8292,6 +8292,56 @@ kbd {
   letter-spacing: 0.04em;
 }
 
+.bug-detail-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.bug-detail-nav-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.bug-detail-nav-btn svg {
+  width: 15px;
+  height: 15px;
+}
+
+.bug-detail-nav-btn:hover:not(:disabled) {
+  background: var(--surface-soft);
+  color: var(--primary);
+}
+
+.bug-detail-nav-btn:disabled {
+  opacity: 0.34;
+  cursor: not-allowed;
+}
+
+.bug-detail-nav-position {
+  min-width: 42px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 650;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .bug-detail-doc {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
