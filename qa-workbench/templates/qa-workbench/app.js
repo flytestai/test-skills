@@ -1220,8 +1220,8 @@
     if (!tasks.length) {
       return `<div class="empty-state">
         <div class="empty-icon">${icon('tasks')}</div>
-        <h3>${hasActiveTaskFilters() ? '没有匹配的任务' : '当前范围下还没有任务'}</h3>
-        <p>${hasActiveTaskFilters() ? '试试调整筛选条件，或清空搜索关键词。' : '可以手动新建本地任务，或从禅道刷新已有任务。'}</p>
+        <h3>${hasActiveTaskFilters() ? '没有匹配的任务' : '禅道暂时没有指派给你的任务'}</h3>
+        <p>${hasActiveTaskFilters() ? '试试调整筛选条件，或清空搜索关键词。' : 'QDesk 只同步负责人为你的禅道任务；可以手动新建本地任务，或从禅道刷新。'}</p>
         ${hasActiveTaskFilters()
           ? `<button class="btn btn-soft btn-sm" type="button" data-action="clear-task-filters">${icon('refresh')}清空筛选</button>`
           : `<div class="empty-actions"><button class="btn btn-primary btn-sm" type="button" data-action="create-task">${icon('plus')}新建任务</button><button class="btn btn-soft btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button></div>`}
