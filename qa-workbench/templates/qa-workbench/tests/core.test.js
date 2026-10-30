@@ -394,6 +394,18 @@ test('filterBugs pendingVerification 与工作台今日待验证集合一致', (
   assert.deepEqual(focus.bugs.items.map((bug) => bug.id).sort(), pending.map((bug) => bug.id).sort());
 });
 
+test('filterBugs assignedOpen 只保留指派给我且未关闭的 Bug', () => {
+  const bugs = [
+    { id: 'B-1', status: 'active', isAssignedToMe: true },
+    { id: 'B-2', status: 'verifying', isAssignedToMe: true },
+    { id: 'B-3', status: 'closed', isAssignedToMe: true },
+    { id: 'B-4', status: 'active', isAssignedToMe: false },
+    { id: 'B-5', status: 'resolved', isAssignedToMe: true }
+  ];
+  const rows = Core.filterBugs(bugs, { assignedOpen: true });
+  assert.deepEqual(rows.map((bug) => bug.id).sort(), ['B-1', 'B-2', 'B-5']);
+});
+
 test('weekSeries 覆盖连续七天并返回可绘制数据', () => {
   const state = fixedState();
   const week = Core.weekSeries(state, FIXED_DATE);

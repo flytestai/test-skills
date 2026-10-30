@@ -170,9 +170,10 @@ function usage() {
 Bug:
   bugs list [--scope opened|assigned|autojob|all] [--status ...]
             [--severity ...] [--type ...] [--product ...] [--version ...]
-            [--assignee ...] [--mine] [--pending] [--q ...]
+            [--assignee ...] [--mine] [--pending] [--assigned-open] [--q ...]
             [--sort updated|created|severity|priority] [--order desc|asc]
             [--limit N|--all]         --pending 只看等待我验证的 Bug
+                                      --assigned-open 只看指派给我且未关闭的 Bug
   bugs get <BugID>
   bugs nav <BugID> [--direction prev|next] [同 list 筛选参数]
   bugs stats [--scope ...]
@@ -484,7 +485,10 @@ async function listBugs(options) {
     assignee: opts.assignee !== undefined ? opts.assignee : readOption('assignee'),
     pendingVerification: opts.pendingVerification !== undefined
       ? opts.pendingVerification
-      : (hasFlag('pending') ? true : undefined)
+      : (hasFlag('pending') ? true : undefined),
+    assignedOpen: opts.assignedOpen !== undefined
+      ? opts.assignedOpen
+      : (hasFlag('assigned-open') ? true : undefined)
   });
   if (opts.mine !== undefined ? opts.mine : hasFlag('mine')) {
     bugs = bugs.filter((bug) => bug.isMine);

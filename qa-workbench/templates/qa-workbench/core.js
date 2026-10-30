@@ -1410,6 +1410,7 @@
         if (f.releaseKind === 'pending' && !needsMyVerification(bug)) return false;
         if (f.releaseKind === 'open' && (needsMyVerification(bug) || !bug.isMine || bug.status === 'closed')) return false;
         if (f.pendingVerification && !needsMyVerification(bug)) return false;
+        if (f.assignedOpen && (!bug.isAssignedToMe || bug.status === 'closed')) return false;
         if (f.severity && f.severity !== 'all' && bug.severity !== f.severity) return false;
         if (f.product && f.product !== 'all' && bug.project !== f.product) return false;
         if (f.project && f.project !== 'all' && bug.project !== f.project) return false;
