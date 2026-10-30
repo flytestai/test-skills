@@ -750,17 +750,19 @@ async function buildSnapshot(force) {
   const taskRows = [];
   taskBundles.forEach(({ exec, tasks: rows }) => {
     rows.forEach((row) => {
-      taskRows.push(normalizeTask(row, {
+      const task = normalizeTask(row, {
         users,
         account: config.tester.account,
         execution: exec,
         webUrl
-      }));
+      });
+      // Only the current account's tasks are synchronized into QDesk.
+      if (task.isMine) taskRows.push(task);
     });
   });
   taskRows.sort(compareTask);
 
-  const taskMine = taskRows.filter((task) => task.isMine);
+  const taskMine = taskRows;
   const taskTests = taskRows.filter((task) => task.isTest);
   const openedBugs = bugs.filter((bug) => bug.isMine);
   const assignedBugs = bugs.filter((bug) => bug.isAssignedToMe);

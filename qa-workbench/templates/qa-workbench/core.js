@@ -1384,6 +1384,7 @@
         if (f.priority && f.priority !== 'all' && task.priority !== f.priority) return false;
         if (f.source === 'local' && !task.isLocal) return false;
         if (f.source === 'zentao' && task.isLocal) return false;
+        if (f.testOnly && !task.isTest) return false;
         if (f.project && f.project !== 'all' && task.project !== f.project) return false;
         if (f.due === 'today' && task.dueDate !== day) return false;
         if (f.due === 'overdue' && !isTaskOverdue(task, day)) return false;

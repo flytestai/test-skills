@@ -304,9 +304,10 @@ The fourth dashboard KPI card is `今日待验证`. It lists every pending-verif
 
 Task scope semantics:
 
-- `mine`: assigned to the configured account.
+- ZenTao sync imports only tasks whose `assignedTo` is the configured account; tasks assigned to other users are discarded during normalization and never enter the snapshot.
+- `mine`: synced ZenTao tasks plus QDesk local tasks (local tasks are always mine).
 - `test`: task type is test.
-- `all`: all tasks from visible executions.
+- `all`: every task retained in the snapshot, i.e. my ZenTao tasks plus local tasks.
 
 ## Local files
 

@@ -365,6 +365,16 @@ test('filterTasks 区分禅道任务与 QDesk 本地任务', () => {
   assert.equal(Core.filterTasks(tasks, { source: 'all' }).length, 3);
 });
 
+test('filterTasks testOnly 只保留测试任务', () => {
+  const tasks = [
+    { id: 'T-1', status: 'todo', isTest: true, tags: [] },
+    { id: 'T-2', status: 'todo', isTest: false, tags: [] },
+    { id: 'LT-1', status: 'todo', isTest: true, isLocal: true, tags: [] }
+  ];
+  assert.deepEqual(Core.filterTasks(tasks, { testOnly: true }).map((task) => task.id).sort(), ['LT-1', 'T-1']);
+  assert.equal(Core.filterTasks(tasks, { testOnly: false }).length, 3);
+});
+
 test('filterTasks 置顶任务始终排在普通任务之前', () => {
   const tasks = [
     { id: 'T-1', title: '普通高优任务', status: 'doing', priority: 'P0', pinned: false, updatedAt: '2026-10-29T10:00:00.000Z', tags: [] },

@@ -243,9 +243,8 @@
     if (!ui.bugFilters.product) ui.bugFilters.product = 'all';
     if (!ui.bugSort) ui.bugSort = { key: 'updatedAt', dir: 'desc' };
     ui.taskView = (local.taskView || preferences.taskView) === 'list' ? 'list' : 'board';
-    ui.taskScope = ['mine', 'test', 'all'].includes(local.taskScope || preferences.taskScope)
-      ? (local.taskScope || preferences.taskScope)
-      : 'mine';
+    // ZenTao sync now returns only tasks assigned to the current account.
+    ui.taskScope = 'mine';
     ui.bugScope = ['opened', 'assigned', 'autojob', 'all'].includes(local.bugScope || preferences.bugScope)
       ? (local.bugScope || preferences.bugScope)
       : 'opened';
@@ -1216,39 +1215,6 @@
     return Core.filterTasks(visibleTasks(), ui.taskFilters);
   }
 
-  function taskScopeRow() {
-    const counts = state.scopeCounts && state.scopeCounts.tasks
-      ? state.scopeCounts.tasks
-      : {
-        mine: state.tasks.length,
-        test: state.allTasks.filter((task) => task.isTest).length,
-        all: state.allTasks.length
-      };
-    return `<div class="scope-row">
-      <div class="segmented scope-switch" role="group" aria-label="任务范围">
-        <button type="button" data-action="set-task-scope" data-scope="mine" class="${ui.taskScope === 'mine' ? 'active' : ''}">${icon('user')}我的任务 <b>${counts.mine}</b></button>
-        <button type="button" data-action="set-task-scope" data-scope="test" class="${ui.taskScope === 'test' ? 'active' : ''}">${icon('shield')}测试任务 <b>${counts.test}</b></button>
-        <button type="button" data-action="set-task-scope" data-scope="all" class="${ui.taskScope === 'all' ? 'active' : ''}">${icon('layers')}全部任务 <b>${counts.all}</b></button>
-      </div>
-      <span class="scope-note">${icon('database')}${(state.projectList || []).length} 个项目 · 账号 ${esc(state.zentao ? state.zentao.account : '')} · 后台同步</span>
-    </div>`;
-  }
-
-  function taskProjectStrip() {
-    const groups = (state.projectList || []).slice()
-      .sort((a, b) => (b.taskCount || 0) - (a.taskCount || 0) || a.name.localeCompare(b.name, 'zh-CN'));
-    if (!groups.length) return '';
-    const active = ui.taskFilters.project || 'all';
-    const total = state.allTasks.length;
-    return `<div class="task-project-strip">
-      <span class="task-project-label">${icon('folder')}项目</span>
-      <div class="project-strip" aria-label="按项目分类">
-        <button class="project-chip${active === 'all' ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="all">全部项目 <b>${total}</b></button>
-        ${groups.map((group) => `<button class="project-chip${active === group.name ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="${esc(group.name)}" title="${esc(group.status || '')}">${esc(group.name)} <b>${group.taskCount || 0}</b></button>`).join('')}
-      </div>
-    </div>`;
-  }
-
   function taskResultsHtml() {
     const tasks = filteredTasks();
     if (!tasks.length) {
@@ -1301,7 +1267,6 @@
         <div class="task-card-badges">
           ${severityBadge(task.priority)}
           ${taskSourceBadge(task)}
-          ${task.pinned ? `<span class="task-pin-tag">${icon('flag')}置顶</span>` : ''}
         </div>
         <div class="task-card-tools">
           ${local ? `<button class="card-pin${task.pinned ? ' active' : ''}" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}" aria-label="${task.pinned ? '取消置顶' : '置顶任务'}" title="${task.pinned ? '取消置顶' : '置顶任务'}" aria-pressed="${task.pinned ? 'true' : 'false'}">${icon('flag')}</button>` : ''}
@@ -1312,9 +1277,7 @@
       <div class="kanban-meta">
         <span class="project">${esc(task.project)}</span>
         ${task.execution ? '<span class="sep"></span><span class="task-card-exec">' + esc(task.execution) + '</span>' : ''}
-        ${task.type ? `<span class="task-card-type">${esc(task.type)}</span>` : ''}
       </div>
-      ${task.tags && task.tags.length ? `<div class="kanban-tags">${tagList(task.tags.slice(0, 3))}</div>` : ''}
       <div class="kanban-footer">
         ${dueChip(task)}
         <span class="task-card-assignee" title="负责人：${esc(assignee)}">
@@ -1365,7 +1328,7 @@
 
   function hasActiveTaskFilters() {
     const f = ui.taskFilters;
-    return Boolean(f.q || (f.priority && f.priority !== 'all') || (f.source && f.source !== 'all') || (f.project && f.project !== 'all') || (f.due && f.due !== 'all'));
+    return Boolean(f.q || (f.priority && f.priority !== 'all') || (f.source && f.source !== 'all') || (f.project && f.project !== 'all') || (f.due && f.due !== 'all') || f.testOnly);
   }
 
   function updateTaskCount() {
@@ -1387,7 +1350,11 @@
     const scopedTasks = visibleTasks();
     const localCount = scopedTasks.filter((task) => task.isLocal).length;
     const source = f.source || 'all';
-    return `${taskScopeRow()}
+    const projectNames = Array.from(new Set([
+      ...(state.projectList || []).map((project) => project.name),
+      ...scopedTasks.map((task) => task.project)
+    ].filter(Boolean))).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    return `
     <div class="task-toolbar">
       <div class="task-toolbar-main">
         <div class="search-field">
@@ -1399,16 +1366,22 @@
           <option value="zentao"${source === 'zentao' ? ' selected' : ''}>禅道同步（${scopedTasks.length - localCount}）</option>
           <option value="local"${source === 'local' ? ' selected' : ''}>QDesk 本地（${localCount}）</option>
         </select>
+        <select class="select" data-filter="task-project" aria-label="按项目筛选">
+          <option value="all">全部项目</option>
+          ${projectNames.map((project) => `<option value="${esc(project)}"${f.project === project ? ' selected' : ''}>${esc(project)}</option>`).join('')}
+        </select>
         <select class="select" data-filter="task-priority" aria-label="按优先级筛选">
           <option value="all">全部优先级</option>
           ${Object.keys(Core.SEVERITY).map((key) => `<option value="${key}"${f.priority === key ? ' selected' : ''}>${Core.SEVERITY[key].label}</option>`).join('')}
         </select>
-        <button class="filter-chip${f.due === 'today' ? ' active' : ''}" type="button" data-action="toggle-task-due" style="height:37px;border:1px solid var(--line-strong);background:${f.due === 'today' ? '#fff' : 'rgba(255,255,255,.65)'}">${icon('calendar')} 今日到期</button>
+        <button class="filter-chip task-filter-chip${f.due === 'today' ? ' active' : ''}" type="button" data-action="toggle-task-due">${icon('calendar')}今日到期</button>
+        <button class="filter-chip task-filter-chip${f.testOnly ? ' active' : ''}" type="button" data-action="toggle-task-test" aria-pressed="${f.testOnly ? 'true' : 'false'}">${icon('shield')}只看测试任务</button>
         <div class="toolbar-spacer"></div>
         <button class="btn btn-primary task-create-btn" type="button" data-action="create-task">${icon('plus')}新建任务</button>
       </div>
-      <div class="task-toolbar-secondary">
-        ${taskProjectStrip()}
+      <div class="task-toolbar-sub">
+        <span class="result-meta" id="task-result-count">${taskCountLabel()}</span>
+        <span class="task-source-note">${icon('shield')}仅同步我名下的禅道任务 · 本地任务不会写入禅道</span>
         <div class="task-view-actions">
           <div class="segmented" role="group" aria-label="任务视图">
             <button type="button" data-action="set-task-view" data-view="board" class="${ui.taskView === 'board' ? 'active' : ''}">${icon('columns')}看板</button>
@@ -1417,10 +1390,6 @@
           <button class="btn" type="button" data-action="sync-zentao">${icon('refresh')}刷新禅道</button>
         </div>
       </div>
-    </div>
-    <div class="task-toolbar-meta">
-      <span class="result-meta" id="task-result-count">${taskCountLabel()}</span>
-      <span class="task-source-note">${icon('shield')}本地任务仅保存在 QDesk，不会同步到禅道</span>
     </div>
     <div id="task-results">${taskResultsHtml()}</div>`;
   }
@@ -4195,6 +4164,13 @@
       renderTaskResults();
       return;
     }
+    if (action === 'toggle-task-test') {
+      ui.taskFilters.testOnly = !ui.taskFilters.testOnly;
+      actionEl.classList.toggle('active', Boolean(ui.taskFilters.testOnly));
+      actionEl.setAttribute('aria-pressed', ui.taskFilters.testOnly ? 'true' : 'false');
+      renderTaskResults();
+      return;
+    }
     if (action === 'clear-task-filters') {
       ui.taskFilters = { q: '', status: 'all', priority: 'all', project: 'all', due: 'all' };
       renderView(false);
@@ -4476,7 +4452,7 @@
       bugDetailId: parseHash().bugId,
       bugEditing: parseHash().bugEditing,
       taskView: prefs.taskView === 'list' ? 'list' : 'board',
-      taskScope: prefs.taskScope === 'test' ? 'test' : 'mine',
+      taskScope: 'mine',
       bugScope: ['opened', 'assigned', 'autojob', 'all'].includes(prefs.bugScope) ? prefs.bugScope : 'opened',
       taskFilters: { q: '', status: 'all', priority: 'all', project: 'all', due: 'all' },
       bugFilters: { q: '', status: 'all', severity: 'all', type: 'all', project: 'all' },
