@@ -73,6 +73,95 @@ test('renderReportMarkdown 输出日报模板结构', () => {
   assert.match(markdown, /测试开发工程师/);
 });
 
+test('renderReportCopyText 输出紧凑复制格式且不含指派开发', () => {
+  const state = fixedState();
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.tasks = [];
+  state.bugs = [{
+    id: 'B-1',
+    title: '登录按钮无响应',
+    status: 'active',
+    isMine: true,
+    severity: 'P2',
+    version: '2.9.0',
+    createdAt: Core.dateAt(FIXED_DATE, 9, 0),
+    updatedAt: Core.dateAt(FIXED_DATE, 9, 0),
+    history: []
+  }];
+  state.releases = [{
+    key: '2.9.0',
+    name: '2.9.0',
+    projects: [],
+    testStart: '2026-10-01T09:00',
+    testEnd: '2099-12-31T18:00',
+    status: 'testing'
+  }];
+  state.autojobBugs = [{
+    id: 'A-1',
+    title: '客服反馈',
+    status: 'closed',
+    createdAt: Core.dateAt(FIXED_DATE, 8, 0),
+    closedAt: Core.dateAt(FIXED_DATE, 10, 0),
+    closedByAccount: 'weizhen',
+    autojobRelation: 'closed',
+    history: []
+  }, {
+    id: 'A-2',
+    title: '客服反馈 2',
+    status: 'active',
+    assigneeAccount: 'dev1',
+    assignee: 'dev1',
+    createdAt: Core.dateAt(Core.addDays(FIXED_DATE, -1), 8, 0),
+    updatedAt: Core.dateAt(FIXED_DATE, 10, 30),
+    history: [{ at: Core.dateAt(FIXED_DATE, 10, 30), text: '魏振 指派给 dev1' }]
+  }];
+
+  const report = Core.buildReport(state, FIXED_DATE);
+  const copied = Core.renderReportCopyText(report, state.profile);
+  assert.equal(copied, [
+    '2.9.0版本测试进度：0%',
+    '今日新增bug：1  验收bug：0  剩余未关闭bug：1',
+    '',
+    '今日任务:',
+    '暂无今日任务记录',
+    '',
+    'AI客服今日：',
+    '今日新增：1',
+    '验证已关闭BUG：1'
+  ].join('\n'));
+  assert.doesNotMatch(copied, /指派开发/);
+  assert.doesNotMatch(copied, /# 工作日报|由 QDesk/);
+});
+
+test('多版本日报按版本分别显示剩余未关闭 Bug', () => {
+  const state = fixedState();
+  state.tasks = [];
+  state.bugs = [
+    {
+      id: 'B-1', title: '2.9.0 未关闭', status: 'active', isMine: true, version: '2.9.0',
+      createdAt: Core.dateAt(FIXED_DATE, 9, 0), updatedAt: Core.dateAt(FIXED_DATE, 9, 0), history: []
+    },
+    {
+      id: 'B-2', title: '3.0.0 未关闭', status: 'active', isMine: true, version: '3.0.0',
+      createdAt: Core.dateAt(FIXED_DATE, 9, 0), updatedAt: Core.dateAt(FIXED_DATE, 9, 0), history: []
+    }
+  ];
+  state.releases = [
+    {
+      key: '2.9.0', name: '2.9.0', projects: [], testStart: '2026-10-01T09:00',
+      testEnd: '2099-12-31T18:00', status: 'testing', pinned: true, priority: 'P1'
+    },
+    {
+      key: '3.0.0', name: '3.0.0', projects: [], testStart: '2026-10-01T09:00',
+      testEnd: '2099-12-31T18:00', status: 'testing', priority: 'P2'
+    }
+  ];
+  const report = Core.buildReport(state, FIXED_DATE);
+  assert.match(report.content.version, /2\.9\.0版本测试进度：\d+%  剩余未关闭bug：1/);
+  assert.match(report.content.version, /3\.0\.0版本测试进度：\d+%  剩余未关闭bug：1/);
+  assert.equal(report.content.bugsSummary, '今日新增bug：2  验收bug：0');
+});
+
 test('buildReport 汇总版本进度、任务进度与 AI 客服数据', () => {
   const state = fixedState();
   state.tester = { account: 'weizhen', name: '魏振' };
@@ -171,7 +260,7 @@ test('buildReport 汇总版本进度、任务进度与 AI 客服数据', () => {
 
   const report = Core.buildReport(state, FIXED_DATE);
   assert.match(report.content.version, /2\.9\.0版本测试进度：\d+%/);
-  assert.equal(report.content.bugsSummary, '今日新增bug：1  验收bug：1  剩余未关闭bug：2');
+  assert.equal(report.content.bugsSummary, '今日新增bug：1  验收bug：1  剩余未关闭bug：1');
   assert.match(report.content.tasks, /登录回归.*完成进度：50%/);
   assert.match(report.content.tasks, /支付验证.*完成进度：100%/);
   assert.equal(report.content.autojob, '今日新增：1\n验证已关闭BUG：1\n指派开发：1');

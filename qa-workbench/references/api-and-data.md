@@ -89,17 +89,18 @@ The snapshot exposes both `releasePlans` (raw saved windows keyed by version) an
   "content": {
     "summary": "2.9.0版本测试进度：83%，今日新增 0 个 Bug，验收 20 个 Bug。",
     "version": "2.9.0版本测试进度：83%",
-    "bugsSummary": "今日新增bug：0  验收bug：20  剩余未关闭bug：120",
+    "bugsSummary": "今日新增bug：0  验收bug：20  剩余未关闭bug：12",
     "tasks": "1.登录回归  完成进度：50%\n2.支付验证  完成进度：100%",
     "autojob": "今日新增：4\n验证已关闭BUG：16\n指派开发：0"
   }
 }
 ```
 
-- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness.
-- `bugsSummary`: current account's Bugs created today, verified/closed today, and still open.
+- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness. When there are multiple scheduled versions, each line also carries that version's `剩余未关闭bug：N`.
+- `bugsSummary`: current account's Bugs created today and verified/closed today. With exactly one scheduled version it also carries that version's remaining-open count; with multiple versions those counts are on each version line; with no scheduled version it falls back to the account-wide remaining-open count.
 - `tasks`: current account's tasks with activity today, using consumed / (consumed + left) when available; falling back to the task status heuristic.
 - `autojob`: related AI customer-service Bugs created today, closed today by the account, and assigned to a developer today.
+- One-click copy (`Core.renderReportCopyText`) emits compact plain text only: the version block, the Bug summary, `今日任务:`, the task lines or `暂无今日任务记录`, and `AI客服今日：` with only `今日新增` and `验证已关闭BUG`. It omits the report header, status line, footer and `指派开发`. This is also the recommended clipboard format for pasting into chat.
 - Legacy `summary`, `done`, `bugs`, `ongoing`, `next` and `risks` fields remain supported for old reports. Markdown export uses the compact template whenever any of `version`, `bugsSummary`, `tasks` or `autojob` is present.
 
 ## Local tasks

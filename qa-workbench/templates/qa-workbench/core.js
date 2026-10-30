@@ -1058,14 +1058,14 @@
     return Array.from(items.values()).sort(compareTasks).slice(0, 12);
   }
 
-  function reportVersionLines(state, day) {
+  function reportVersionStats(state, day, scopedBugs) {
     const allTasks = state.allTasks || state.tasks || [];
     const allBugs = state.allBugs || state.bugs || [];
     const releases = Array.isArray(state.releases) && state.releases.length
       ? state.releases
       : releaseCatalog({ tasks: allTasks, bugs: allBugs }, state.releasePlans || {});
     const scheduled = releases.filter((item) => !item.closed && (item.testStart || item.testEnd));
-    if (!scheduled.length) return '暂无已设置测试时间的版本';
+    if (!scheduled.length) return [];
     const focus = dailyFocus({
       tasks: allTasks,
       bugs: allBugs,
@@ -1073,10 +1073,16 @@
       tester: state.tester || null
     }, day);
     const progressMap = new Map(focus.versions.items.map((item) => [item.key, item.progress]));
+    const bugs = Array.isArray(scopedBugs) ? scopedBugs : [];
     return scheduled.map((item) => {
       const progress = progressMap.has(item.key) ? progressMap.get(item.key) : item.taskProgress;
-      return `${item.name}版本测试进度：${progress}%`;
-    }).join('\n');
+      return {
+        key: item.key,
+        name: item.name,
+        progress,
+        remaining: bugs.filter((bug) => isBugOpen(bug) && versionKey(bug.version) === item.key).length
+      };
+    });
   }
 
   function reportAutojobBlock(state, day) {
@@ -1158,8 +1164,18 @@
       riskParts.push(`- ${bug.id} [${bug.pri}] ${bug.title}：客服反馈待处理（${bug.project}）`);
     });
 
-    const versionLines = reportVersionLines(state, day);
-    const bugSummary = `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}  剩余未关闭bug：${bugs.filter(isBugOpen).length}`;
+    const versionStats = reportVersionStats(state, day, bugs);
+    const multipleVersions = versionStats.length > 1;
+    const versionLines = versionStats.length
+      ? versionStats.map((item) => (
+        `${item.name}版本测试进度：${item.progress}%`
+        + (multipleVersions ? `  剩余未关闭bug：${item.remaining}` : '')
+      )).join('\n')
+      : '暂无已设置测试时间的版本';
+    const bugSummary = versionStats.length
+      ? `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}`
+        + (multipleVersions ? '' : `  剩余未关闭bug：${versionStats[0].remaining}`)
+      : `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}  剩余未关闭bug：${bugs.filter(isBugOpen).length}`;
     const reportTasks = reportTaskItems(reportState, day);
     const taskLines = reportTasks.map((task, index) => (
       `${index + 1}.${task.title}  完成进度：${reportTaskProgress(task)}%`
@@ -1200,6 +1216,27 @@
 
   function section(markdown, title, value) {
     return `## ${title}\n\n${value && value.trim() ? value.trim() : '无'}\n`;
+  }
+
+  function renderReportCopyText(report, profile) {
+    const content = (report && report.content) || {};
+    const templateReport = ['version', 'bugsSummary', 'tasks', 'autojob']
+      .some((key) => String(content[key] || '').trim());
+    if (!templateReport) return renderReportMarkdown(report, profile);
+    const autojobLines = String(content.autojob || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => /^今日新增：|^验证已关闭BUG：/.test(line));
+    return [
+      String(content.version || '暂无已设置测试时间的版本').trim(),
+      String(content.bugsSummary || '今日新增bug：0  验收bug：0').trim(),
+      '',
+      '今日任务:',
+      String(content.tasks || '').trim() || '暂无今日任务记录',
+      '',
+      'AI客服今日：',
+      autojobLines.length ? autojobLines.join('\n') : '今日新增：0\n验证已关闭BUG：0'
+    ].join('\n');
   }
 
   function renderReportMarkdown(report, profile) {
@@ -1790,6 +1827,7 @@
     severityCounts,
     collectDailyData,
     buildReport,
+    renderReportCopyText,
     renderReportMarkdown,
     weekSeries,
     recentActivity,

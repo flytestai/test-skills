@@ -2269,7 +2269,7 @@
             <input type="date" value="${esc(report.date)}" data-role="report-date" aria-label="选择日报日期">
             <button class="icon-btn" type="button" data-action="report-next-date" aria-label="后一天">${icon('chevron-right')}</button>
           </div>
-          <button class="btn" type="button" data-action="copy-report" title="复制 Markdown">${icon('copy')}<span>复制</span></button>
+          <button class="btn" type="button" data-action="copy-report" title="一键复制日报内容">${icon('copy')}<span>一键复制</span></button>
           <button class="btn" type="button" data-action="download-report" title="下载 Markdown">${icon('download')}<span>导出</span></button>
           <button class="btn" type="button" data-action="report-refresh" title="重新采集数据">${icon('refresh')}<span>采集</span></button>
         </div>
@@ -3382,20 +3382,20 @@
   async function copyReport() {
     const report = currentReport();
     if (!report) return;
-    const markdown = Core.renderReportMarkdown(report, state.profile);
+    const text = Core.renderReportCopyText(report, state.profile);
     try {
-      await navigator.clipboard.writeText(markdown);
-      showToast('日报 Markdown 已复制到剪贴板。');
+      await navigator.clipboard.writeText(text);
+      showToast('日报内容已复制到剪贴板。');
     } catch (error) {
       const textarea = document.createElement('textarea');
-      textarea.value = markdown;
+      textarea.value = text;
       textarea.style.position = 'fixed';
       textarea.style.opacity = '0';
       document.body.appendChild(textarea);
       textarea.select();
       document.execCommand('copy');
       textarea.remove();
-      showToast('日报 Markdown 已复制。');
+      showToast('日报内容已复制到剪贴板。');
     }
   }
 
