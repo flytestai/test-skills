@@ -157,27 +157,45 @@ svg {
   position: relative;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 13px;
-  color: #fff;
-  background: linear-gradient(145deg, #6b83ff, #425de7);
-  box-shadow: 0 8px 20px rgba(64, 91, 230, 0.36), inset 0 1px 0 rgba(255, 255, 255, 0.26);
-  font-size: 21px;
-  font-weight: 800;
-  letter-spacing: -1px;
+  width: 44px;
+  height: 44px;
+  overflow: hidden;
+  border-radius: 14px;
+  background:
+    radial-gradient(120% 120% at 18% 0%, rgba(129, 150, 255, 0.38), transparent 52%),
+    linear-gradient(145deg, #1b2a4a 0%, #0d172c 100%);
+  border: 1px solid rgba(151, 172, 255, 0.3);
+  box-shadow:
+    0 12px 30px rgba(5, 12, 28, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -10px 20px rgba(36, 60, 140, 0.18);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
-.brand-mark::after {
+.brand-mark::before {
   content: "";
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #63e6ce;
-  box-shadow: 0 0 0 3px rgba(99, 230, 206, 0.14);
+  inset: 1px;
+  border-radius: 13px;
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.12), transparent 38%);
+  pointer-events: none;
+}
+
+.brand-logo {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  filter: drop-shadow(0 2px 5px rgba(67, 93, 230, 0.35));
+}
+
+.brand:hover .brand-mark {
+  border-color: rgba(151, 172, 255, 0.52);
+  box-shadow:
+    0 14px 34px rgba(5, 12, 28, 0.62),
+    0 0 0 1px rgba(104, 130, 255, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transform: translateY(-1px);
 }
 
 .brand-text {
@@ -5000,10 +5018,7 @@ body {
 .brand-mark {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
-  background: linear-gradient(145deg, #5c75ff, #3853de);
-  box-shadow: 0 10px 24px rgba(53, 79, 213, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.26);
-  font-size: 23px;
+  border-radius: 14px;
 }
 
 .brand-text strong {
