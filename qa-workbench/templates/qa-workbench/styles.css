@@ -169,7 +169,7 @@ svg {
   width: 52px;
   height: 52px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.1), transparent 66%);
+  background: radial-gradient(circle, rgba(232, 205, 154, 0.13), transparent 66%);
   pointer-events: none;
 }
 
@@ -187,7 +187,7 @@ svg {
 }
 
 .brand:hover .brand-logo {
-  filter: drop-shadow(0 0 9px rgba(255, 255, 255, 0.24));
+  filter: drop-shadow(0 0 9px rgba(232, 205, 154, 0.26));
 }
 
 .brand-text {
@@ -205,7 +205,7 @@ svg {
 
 .brand-text span {
   margin-top: 4px;
-  color: #8d9bb7;
+  color: #9b9384;
   font-size: 11px;
   letter-spacing: 1.6px;
 }
@@ -5020,7 +5020,7 @@ body {
 
 .brand-text span {
   margin-top: 4px;
-  color: #8794ad;
+  color: #9b9384;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.14em;
