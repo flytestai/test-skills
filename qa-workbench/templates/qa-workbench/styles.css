@@ -159,35 +159,31 @@ svg {
   place-items: center;
   width: 44px;
   height: 44px;
-  background: transparent;
-  transition: transform 0.2s ease;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(145deg, #5c75ff, #3853de);
+  box-shadow: 0 10px 24px rgba(53, 79, 213, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -1px;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
-.brand-mark::before {
+.brand-mark::after {
   content: "";
   position: absolute;
-  width: 52px;
-  height: 52px;
+  right: 8px;
+  bottom: 8px;
+  width: 5px;
+  height: 5px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.1), transparent 66%);
-  pointer-events: none;
-}
-
-.brand-logo {
-  position: relative;
-  z-index: 1;
-  width: 37px;
-  height: 37px;
-  filter: drop-shadow(0 1px 2px rgba(3, 8, 18, 0.55));
-  transition: filter 0.2s ease;
+  background: #63e6ce;
+  box-shadow: 0 0 0 3px rgba(99, 230, 206, 0.14);
 }
 
 .brand:hover .brand-mark {
   transform: translateY(-1px);
-}
-
-.brand:hover .brand-logo {
-  filter: drop-shadow(0 0 9px rgba(255, 255, 255, 0.24));
+  box-shadow: 0 12px 28px rgba(64, 91, 230, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.26);
 }
 
 .brand-text {
