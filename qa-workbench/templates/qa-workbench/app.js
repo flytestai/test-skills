@@ -1728,11 +1728,9 @@
       <div class="bug-detail-float-nav" role="group" aria-label="切换 Bug">
         <button class="bug-detail-float-btn" type="button" data-action="bug-prev"${nav.previous ? '' : ' disabled'} title="上一个 Bug（←）" aria-label="上一个 Bug">
           <span class="bug-detail-float-icon">${icon('chevron-left')}</span>
-          <span class="bug-detail-float-label">上一个</span>
         </button>
         <button class="bug-detail-float-btn" type="button" data-action="bug-next"${nav.next ? '' : ' disabled'} title="下一个 Bug（→）" aria-label="下一个 Bug">
           <span class="bug-detail-float-icon">${icon('chevron-right')}</span>
-          <span class="bug-detail-float-label">下一个</span>
         </button>
       </div>
       <div class="bug-detail-topbar">
