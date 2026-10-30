@@ -161,12 +161,35 @@ svg {
   height: 44px;
   border-radius: 12px;
   color: #fff;
-  background: linear-gradient(145deg, #5c75ff, #3853de);
-  box-shadow: 0 10px 24px rgba(53, 79, 213, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  background: linear-gradient(145deg, #6b83ff 0%, #4d67f5 48%, #334dde 100%);
+  box-shadow:
+    0 10px 24px rgba(53, 79, 213, 0.38),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38),
+    inset 0 -10px 14px rgba(18, 34, 120, 0.16);
   font-size: 23px;
   font-weight: 800;
   letter-spacing: -1px;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.brand-mark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(150deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.1) 24%, rgba(255, 255, 255, 0) 46%),
+    radial-gradient(80% 55% at 22% 0%, rgba(255, 255, 255, 0.3), transparent 68%);
+  opacity: 0.85;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.brand-mark > span {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 2px rgba(22, 37, 120, 0.35);
 }
 
 .brand-mark::after {
@@ -174,16 +197,25 @@ svg {
   position: absolute;
   right: 8px;
   bottom: 8px;
+  z-index: 2;
   width: 5px;
   height: 5px;
   border-radius: 50%;
   background: #63e6ce;
-  box-shadow: 0 0 0 3px rgba(99, 230, 206, 0.14);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 3px rgba(99, 230, 206, 0.14);
 }
 
 .brand:hover .brand-mark {
   transform: translateY(-1px);
-  box-shadow: 0 12px 28px rgba(64, 91, 230, 0.48), inset 0 1px 0 rgba(255, 255, 255, 0.26);
+  box-shadow:
+    0 12px 28px rgba(64, 91, 230, 0.48),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.44),
+    inset 0 -10px 14px rgba(18, 34, 120, 0.16);
+}
+
+.brand:hover .brand-mark::before {
+  opacity: 1;
 }
 
 .brand-text {
