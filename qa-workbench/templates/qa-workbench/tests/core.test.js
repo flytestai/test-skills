@@ -620,3 +620,24 @@ test('dailyFocus 使用发版测试窗口标记待发版版本', () => {
   assert.equal(closedFocus.versions.items.some((item) => item.key === '2.8.0'), false);
   assert.equal(closedFocus.versions.pending, 0);
 });
+
+test('只设置测试开始时间的版本不计入待发版', () => {
+  const state = fixedState();
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.releases = [{
+    key: '3.0.0',
+    name: '3.0.0',
+    projects: ['行情终端'],
+    testStart: '2026-10-01T09:00',
+    testEnd: '',
+    status: 'testing'
+  }];
+  const focus = Core.dailyFocus(state, FIXED_DATE);
+  const version = focus.versions.items.find((item) => item.key === '3.0.0');
+  assert.ok(version);
+  assert.equal(version.testStart, '2026-10-01T09:00');
+  assert.equal(version.testEnd, '');
+  assert.equal(version.releaseStatus, 'testing');
+  assert.equal(focus.versions.pending, 0);
+  assert.equal(focus.versions.scheduled, 0);
+});

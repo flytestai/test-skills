@@ -96,7 +96,7 @@ The snapshot exposes both `releasePlans` (raw saved windows keyed by version) an
 }
 ```
 
-- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness. Versions whose test end time has passed remain in the report but are omitted from the dashboard pending-release queue. When there are multiple scheduled versions, each line also carries that version's `剩余未关闭bug：N`.
+- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness. Versions whose test end time has passed remain in the report but are omitted from the dashboard pending-release queue, and versions with only a test start time are likewise not counted as awaiting release. When there are multiple scheduled versions, each line also carries that version's `剩余未关闭bug：N`.
 - `bugsSummary`: current account's Bugs created today and verified/closed today. With exactly one scheduled version it also carries that version's remaining-open count; with multiple versions those counts are on each version line; with no scheduled version the line omits the remaining-open count rather than showing an account-wide total.
 - `tasks`: current account's tasks with activity today, using consumed / (consumed + left) when available; falling back to the task status heuristic.
 - `autojob`: related AI customer-service Bugs created today, closed today by the account, and assigned to a developer today.

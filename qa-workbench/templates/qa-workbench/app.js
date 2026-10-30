@@ -787,7 +787,7 @@
     });
     const pendingSevere = pendingBugs.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1' || bug.severity === 'P0' || bug.severity === 'P1').length;
     const scheduledVersions = dailyFocus.versions.items.filter((item) => (
-      (item.testStart || item.testEnd) && item.releaseStatus !== 'ended'
+      item.testEnd && item.releaseStatus !== 'ended'
     ));
     const topVersions = scheduledVersions.slice(0, 3);
     const versionNames = topVersions.map((item) => (
