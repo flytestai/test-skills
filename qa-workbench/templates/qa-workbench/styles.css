@@ -179,11 +179,16 @@ svg {
   inset: 0;
   border-radius: inherit;
   background:
+    linear-gradient(150deg, transparent 37%, rgba(255, 255, 255, 0.42) 49%, rgba(255, 255, 255, 0.08) 57%, transparent 66%),
     linear-gradient(150deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.1) 24%, rgba(255, 255, 255, 0) 46%),
     radial-gradient(80% 55% at 22% 0%, rgba(255, 255, 255, 0.3), transparent 68%);
+  background-repeat: no-repeat;
+  background-size: 240% 240%, 100% 100%, 100% 100%;
+  background-position: -140% -140%, 0 0, 0 0;
   opacity: 0.85;
   pointer-events: none;
   transition: opacity 0.2s ease;
+  animation: brand-sheen 5.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
 .brand-mark > span {
@@ -203,6 +208,29 @@ svg {
   border-radius: 50%;
   background: #63e6ce;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 3px rgba(99, 230, 206, 0.14);
+  animation: brand-status-pulse 3.4s ease-out infinite;
+}
+
+@keyframes brand-sheen {
+  0%,
+  62% {
+    background-position: -140% -140%, 0 0, 0 0;
+  }
+  86%,
+  100% {
+    background-position: 140% 140%, 0 0, 0 0;
+  }
+}
+
+@keyframes brand-status-pulse {
+  0%,
+  28%,
+  100% {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 3px rgba(99, 230, 206, 0.14);
+  }
+  12% {
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3), 0 0 0 6px rgba(99, 230, 206, 0);
+  }
 }
 
 .brand:hover .brand-mark {
