@@ -74,7 +74,7 @@ Release records are derived from synchronized ZenTao data; no build or release w
 - Test windows, pinning, priorities and close flags are stored only in `data/app-data.json` under `releasePlans`; they never write back to ZenTao.
 - The response returns `{ plan, releases, releasePlans, revision }`. Clients can merge `releasePlans` locally without a full snapshot reload.
 
-The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. `focus.versions.pending` counts only version items whose `testStart` or `testEnd` is non-empty; unplanned versions still appear in `items` for version readiness but are not counted as awaiting release. Locally `closed` versions are removed from the queue entirely. The dashboard `发版：…` line uses the same scheduled-only filter and follows the same pin/priority order.
+The snapshot exposes both `releasePlans` (raw saved windows keyed by version) and `releases` (derived catalog). `Core.dailyFocus` merges the same records into `focus.versions.items[].testStart`, `testEnd`, `releaseStatus`, `pinned` and `priority`, so dashboard version labels, tooltips and ordering stay in sync with the release page. `focus.versions.pending` counts only version items whose `testStart` or `testEnd` is non-empty and whose release has not ended; unplanned versions still appear in `items` for version readiness but are not counted as awaiting release. Versions whose `testEnd` has passed remain in 发版管理 with status `已结束` but are removed from the dashboard pending queue and the `发版：…` line. Locally `closed` versions are removed from the queue entirely. The dashboard `发版：…` line uses the same active-scheduled filter and follows the same pin/priority order.
 
 ## Daily reports
 
@@ -96,8 +96,8 @@ The snapshot exposes both `releasePlans` (raw saved windows keyed by version) an
 }
 ```
 
-- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness. When there are multiple scheduled versions, each line also carries that version's `剩余未关闭bug：N`.
-- `bugsSummary`: current account's Bugs created today and verified/closed today. With exactly one scheduled version it also carries that version's remaining-open count; with multiple versions those counts are on each version line; with no scheduled version it falls back to the account-wide remaining-open count.
+- `version`: one line per non-closed version with a configured test start or end time; progress comes from `Core.dailyFocus` version readiness. Versions whose test end time has passed remain in the report but are omitted from the dashboard pending-release queue. When there are multiple scheduled versions, each line also carries that version's `剩余未关闭bug：N`.
+- `bugsSummary`: current account's Bugs created today and verified/closed today. With exactly one scheduled version it also carries that version's remaining-open count; with multiple versions those counts are on each version line; with no scheduled version the line omits the remaining-open count rather than showing an account-wide total.
 - `tasks`: current account's tasks with activity today, using consumed / (consumed + left) when available; falling back to the task status heuristic.
 - `autojob`: related AI customer-service Bugs created today, closed today by the account, and assigned to a developer today.
 - One-click copy (`Core.renderReportCopyText`) emits compact plain text only: the version block, the Bug summary, `今日任务:`, the task lines or `暂无今日任务记录`, and `AI客服今日：` with only `今日新增` and `验证已关闭BUG`. It omits the report header, status line, footer and `指派开发`. This is also the recommended clipboard format for pasting into chat.

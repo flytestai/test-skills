@@ -62,7 +62,8 @@ test('renderReportMarkdown 输出日报模板结构', () => {
   const report = Core.buildReport(state, FIXED_DATE);
   const markdown = Core.renderReportMarkdown(report, state.profile);
   assert.match(markdown, /^# 工作日报｜2026-10-26/);
-  assert.match(markdown, /今日新增bug：2  验收bug：0  剩余未关闭bug：5/);
+  assert.match(markdown, /今日新增bug：2  验收bug：0/);
+  assert.doesNotMatch(markdown, /剩余未关闭bug/);
   assert.match(markdown, /今日任务:/);
   assert.match(markdown, /1\..*完成进度：/);
   assert.match(markdown, /AI客服今日：/);
@@ -160,6 +161,36 @@ test('多版本日报按版本分别显示剩余未关闭 Bug', () => {
   assert.match(report.content.version, /2\.9\.0版本测试进度：\d+%  剩余未关闭bug：1/);
   assert.match(report.content.version, /3\.0\.0版本测试进度：\d+%  剩余未关闭bug：1/);
   assert.equal(report.content.bugsSummary, '今日新增bug：2  验收bug：0');
+});
+
+test('已过测试结束时间的版本不再计入待发版', () => {
+  const state = fixedState();
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.releases = [{
+    key: '2.8.0',
+    name: '2.8.0',
+    projects: ['行情终端'],
+    testStart: '2026-10-01T09:00',
+    testEnd: '2026-10-10T18:00',
+    status: 'ended'
+  }];
+  state.tasks[0].execution = 'PC2.8.0版本';
+  const focus = Core.dailyFocus(state, FIXED_DATE);
+  const version = focus.versions.items.find((item) => item.key === '2.8.0');
+  assert.ok(version);
+  assert.equal(version.releaseStatus, 'ended');
+  assert.equal(focus.versions.pending, 0);
+  assert.equal(focus.versions.scheduled, 0);
+
+  state.tasks = [];
+  state.bugs = [{
+    id: 'B-1', title: '版本结束后仍未关闭', status: 'active', isMine: true, version: '2.8.0',
+    createdAt: Core.dateAt(FIXED_DATE, 9, 0), updatedAt: Core.dateAt(FIXED_DATE, 9, 0), history: []
+  }];
+  const report = Core.buildReport(state, FIXED_DATE);
+  assert.match(report.content.version, /^2\.8\.0版本测试进度：/);
+  assert.equal(report.content.bugsSummary, '今日新增bug：1  验收bug：0  剩余未关闭bug：1');
+  assert.match(Core.renderReportCopyText(report), /^2\.8\.0版本测试进度：/);
 });
 
 test('buildReport 汇总版本进度、任务进度与 AI 客服数据', () => {

@@ -897,7 +897,9 @@
     ));
 
     const versionTotal = versionItems.length;
-    const scheduledVersionTotal = versionItems.filter((item) => item.testStart || item.testEnd).length;
+    const scheduledVersionTotal = versionItems.filter((item) => (
+      (item.testStart || item.testEnd) && item.releaseStatus !== 'ended'
+    )).length;
     const versionReadiness = versionItems.reduce((sum, item) => sum + item.progress, 0) / 100;
     // 综合进度只统计待验证 Bug 和待完成任务；版本就绪度单独展示，不计入百分比。
     const plannedCount = bugTotal + taskTotal;
@@ -1064,7 +1066,9 @@
     const releases = Array.isArray(state.releases) && state.releases.length
       ? state.releases
       : releaseCatalog({ tasks: allTasks, bugs: allBugs }, state.releasePlans || {});
-    const scheduled = releases.filter((item) => !item.closed && (item.testStart || item.testEnd));
+    const scheduled = releases.filter((item) => (
+      !item.closed && (item.testStart || item.testEnd)
+    ));
     if (!scheduled.length) return [];
     const focus = dailyFocus({
       tasks: allTasks,
@@ -1172,10 +1176,8 @@
         + (multipleVersions ? `  剩余未关闭bug：${item.remaining}` : '')
       )).join('\n')
       : '暂无已设置测试时间的版本';
-    const bugSummary = versionStats.length
-      ? `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}`
-        + (multipleVersions ? '' : `  剩余未关闭bug：${versionStats[0].remaining}`)
-      : `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}  剩余未关闭bug：${bugs.filter(isBugOpen).length}`;
+    const bugSummary = `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}`
+      + (versionStats.length && !multipleVersions ? `  剩余未关闭bug：${versionStats[0].remaining}` : '');
     const reportTasks = reportTaskItems(reportState, day);
     const taskLines = reportTasks.map((task, index) => (
       `${index + 1}.${task.title}  完成进度：${reportTaskProgress(task)}%`
@@ -1254,7 +1256,7 @@
     if (templateReport) {
       return header.concat([
         String(content.version || '暂无已设置测试时间的版本').trim(),
-        String(content.bugsSummary || '今日新增bug：0  验收bug：0  剩余未关闭bug：0').trim(),
+        String(content.bugsSummary || '今日新增bug：0  验收bug：0').trim(),
         '',
         '今日任务:',
         String(content.tasks || '').trim() || '暂无今日任务记录',
