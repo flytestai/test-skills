@@ -598,6 +598,8 @@
     });
     const openTasks = state.tasks.filter((task) => task.status !== 'done').length;
     const openBugs = state.bugs.filter((bug) => bug.status !== 'closed').length;
+    const brandMark = $('.brand-mark');
+    if (brandMark) brandMark.classList.toggle('has-todo', openTasks > 0);
     $('#nav-task-count').textContent = String(openTasks);
     $('#nav-bug-count').textContent = String(openBugs);
     const navReleaseCount = $('#nav-release-count');

@@ -208,6 +208,9 @@ svg {
   border-radius: 50%;
   background: #63e6ce;
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.24), 0 0 0 3px rgba(99, 230, 206, 0.14);
+}
+
+.brand-mark.has-todo::after {
   animation: brand-status-pulse 3.4s ease-out infinite;
 }
 
