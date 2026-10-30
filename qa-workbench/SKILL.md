@@ -1,6 +1,6 @@
 ---
 name: qa-workbench
-description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, local task creation, daily reports, local snapshots and Windows auto-start. It also watches Bugs created by an AI customer-service account (default autojob) from customer-service group chats and shows unresolved, pending-verification, closed and high-priority counts on the dashboard for daily follow-up. A release-management page groups versions from task executions and Bug versions and stores local test start/end windows, pinning and P1–P3 priorities linked to the dashboard. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, a customer-feedback tracker, or want to run this workbench for another account or team."
+description: "Deploy and operate a local QA workbench powered by the ZenTao CLI. It auto-discovers every product, project and execution visible to the account, syncs Bugs and tasks silently in the background, groups Bugs by product and tasks by project, supports created/updated time sorting, Bug creation, local task creation, daily reports, local snapshots and Windows auto-start. It also watches Bugs created by an AI customer-service account (default autojob) from customer-service group chats and shows unresolved, pending-verification, closed and high-priority counts on the dashboard for daily follow-up. A release-management page groups versions from task executions and Bug versions and stores local test start/end windows, pinning and P1–P3 priorities linked to the dashboard. Every UI operation is also exposed through one qdesk.mjs CLI, including sync, dashboard, tasks, Bugs, releases, reports, settings, connection, search, notifications, exports and page links. Use when users ask for a local test-management dashboard, a ZenTao task/Bug workbench, a QA daily-report tool, a customer-feedback tracker, or want to run this workbench for another account or team."
 ---
 
 # QDesk QA Workbench
@@ -131,7 +131,57 @@ No product ID or project ID is required. Clicking **测试连接** validates the
 
 If the local CLI profile is already authenticated and the account is known, the workbench can run without saving a password. Ensure `tester.account` in `config.json` is set to that account.
 
-### Local task creation
+## Unified operation CLI
+
+`scripts/qdesk.mjs` exposes every QDesk feature without opening the browser. Use it as the primary way to operate the workbench from a skill or terminal. Run it with Node.js 18+; it has no dependencies.
+
+```bash
+node <skill_dir>/scripts/qdesk.mjs --help
+node <skill_dir>/scripts/qdesk.mjs status
+node <skill_dir>/scripts/qdesk.mjs dashboard --format text
+node <skill_dir>/scripts/qdesk.mjs sync --wait
+```
+
+Command groups:
+
+| Group | What it covers |
+| --- | --- |
+| `status`, `sync`, `bootstrap` | health, scheduled/manual sync, snapshot summary or full snapshot |
+| `dashboard`, `metrics`, `focus`, `notifications`, `activity`, `week` | every dashboard card, progress figure, notification and activity list |
+| `tasks` | list/filter/stats/get, create, update, complete, reopen, pin/unpin, delete, CSV export |
+| `bugs` | list/filter/sort/stats/get, prev/next navigation, refresh, create, update, assign, resolve, close, activate, confirm, delete, CSV export, batch-close planning |
+| `releases` | list, test start/end, priority, pin/unpin, close/reopen, clear, version Bug lists |
+| `reports` | list/get, generate/save/refresh, submit/draft, compact copy, Markdown/JSON export |
+| `settings`, `connection` | profile and preferences, masked connection info, connection test and save |
+| `search`, `open` | global search and deep links to every page or Bug detail |
+| `export` | full local JSON backup, task CSV, Bug CSV |
+
+Examples:
+
+```bash
+node <skill_dir>/scripts/qdesk.mjs tasks create --title "回归验证登录流程" \
+  --start 2026-10-30T09:00 --end 2026-10-30T18:00 --priority P1 --pinned
+
+node <skill_dir>/scripts/qdesk.mjs bugs list --scope assigned --status unclosed --format text
+node <skill_dir>/scripts/qdesk.mjs bugs nav 11911 --direction next
+node <skill_dir>/scripts/qdesk.mjs releases set 2.9.0 --end 2026-10-29T18:00 --priority P1
+node <skill_dir>/scripts/qdesk.mjs reports copy --clipboard
+node <skill_dir>/scripts/qdesk.mjs open bug/11911 --launch
+```
+
+Safety behavior built into the CLI:
+
+- All requests go to the local QDesk API; ZenTao writes still go through QDesk and the ZenTao CLI.
+- Bug writes read the Bug first and refuse when `isAssignedToMe` is not true, with exit code 2.
+- `tasks delete`, `bugs close` and `bugs delete` require `--yes`.
+- Batch close is two-step: `bugs plan-close --ids ...` is read-only, then `bugs close-many --ids ... --yes`. If any ID is not owned or not found, nothing is closed.
+- Writes are re-read and verified by default; use `--no-verify` only when the caller will verify separately.
+- `--dry-run` prints the request without writing and redacts password fields.
+- Passwords are accepted only through `QDESK_ZENTAO_PASSWORD` / `--password-env` or `--password-stdin`; there is no `--password` option.
+
+See `references/operations.md` for the complete command reference, filtering rules and daily workflows.
+
+### Local task creation (legacy helper)
 
 Users can click **新建任务** on the 任务管理 page and fill in title, content, start time, end time, priority and 置顶. Local tasks are stored only in `data/app-data.json`; they never write to ZenTao.
 
@@ -168,6 +218,7 @@ Remove with `uninstall-autostart.ps1`. If the port is not `4173`, use the instal
 
 ## Operating rules
 
+- **Use `scripts/qdesk.mjs` for operations.** It covers the same actions as the UI and enforces the ownership, confirmation and verification rules below. Prefer it over ad-hoc HTTP calls. Add `--dry-run` when preparing a write.
 - **Read-only by default.** Existing ZenTao tasks must not be edited, deleted, or transitioned through this workbench. Local QDesk tasks (`isLocal: true`) may be created, edited, completed or deleted locally. Bug writes are explicit user actions only.
 - **Only operate on your own Bugs.** Any Bug edit, close, resolve, activate, or batch transition must be limited to Bugs whose `assignedTo` is the current account. A Bug opened by the account but assigned to someone else is out of scope. A closed Bug stores `assignedTo=closed`, so its previous owner cannot be proven from the current field.
 - **Batch close needs a confirmation list.** Before closing multiple Bugs, generate a read-only list (Bug ID, title, current status) filtered by `assignedTo`, present it to the user, and wait for an explicit "confirm/execute" reply. Close only the confirmed IDs; never include Bugs outside the list. Default cap is 100; require explicit approval to exceed it.
@@ -224,6 +275,7 @@ node scripts/plan-bulk-close.mjs --product 13 --status resolved --output close-p
 
 ## References
 
+- `references/operations.md` — the complete `qdesk.mjs` command reference and UI-to-command map.
 - `references/configuration.md` — configuration fields, environment variables, data scope and caching.
 - `references/api-and-data.md` — HTTP API, snapshot lifecycle, local storage and security model.
 - `references/safety.md` — ownership rules, bulk-close confirmation and post-write verification.

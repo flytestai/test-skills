@@ -113,6 +113,9 @@ Start from `config.example.json`. The installer creates this file automatically.
 | --- | --- |
 | `QDESK_PORT` | Overrides `server.port` |
 | `QDESK_HOST` | Overrides `server.host` |
+| `QDESK_URL` | Base URL used by `scripts/qdesk.mjs`, default `http://127.0.0.1:4173` |
+| `QDESK_TIMEOUT_MS` | HTTP timeout for `qdesk.mjs`, default `60000` |
+| `QDESK_ZENTAO_PASSWORD` | Password read by `qdesk.mjs connection test/save`; never printed. Prefer a temporary environment variable or `--password-stdin` |
 | `ZENTAO_ACCOUNT` | Overrides `tester.account` |
 | `ZENTAO_PRODUCT_ID` | Compatibility fallback for Bug creation only |
 | `ZENTAO_CLI_JS` | Explicit ZenTao CLI entry path |

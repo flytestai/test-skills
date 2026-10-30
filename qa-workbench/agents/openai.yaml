@@ -1,10 +1,10 @@
 interface:
   display_name: "QDesk 测试工作台"
-  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报，支持手动或通过技能创建带时间和优先级的本地任务；写操作仅限本人名下 Bug，批量关闭先确认清单"
+  short_description: "部署本地禅道测试工作台，自动同步 Bug、任务与日报；全部页面操作可通过 qdesk.mjs 执行，写操作仅限本人名下 Bug，批量关闭先确认清单"
   icon_small: ""
   icon_large: ""
   category: "自定义技能"
   built_in: false
   enabled: true
-  default_prompt: "Use $qa-workbench to deploy a local ZenTao QA workbench for my account. Keep existing ZenTao records read-only; local QDesk tasks may be created with title, content, start/end time, priority and pinning. Only operate on Bugs assigned to me and show a confirmation list before any batch close."
+  default_prompt: "Use $qa-workbench to deploy and operate a local ZenTao QA workbench for my account. Use scripts/qdesk.mjs for dashboard, sync, tasks, Bugs, releases, reports, settings, connection, search, notifications, exports and page links. Keep existing ZenTao tasks read-only; local QDesk tasks may be created with title, content, start/end time, priority and pinning. Only operate on Bugs assigned to me and show a confirmation list before any batch close."
   category_order: 99
