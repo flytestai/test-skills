@@ -379,6 +379,21 @@ test('filterBugs 支持按发版版本与待验证/未关闭口径筛选', () =>
   assert.deepEqual(other.map((bug) => bug.id), ['B-3']);
 });
 
+test('filterBugs pendingVerification 与工作台今日待验证集合一致', () => {
+  const bugs = [
+    { id: 'B-1', status: 'verifying', needsMyVerification: true },
+    { id: 'B-2', status: 'verifying' },
+    { id: 'B-3', status: 'active', isAutojob: true, rawStatus: 'active', autojobRelation: 'assigned' },
+    { id: 'B-4', status: 'active', needsMyVerification: false },
+    { id: 'B-5', status: 'closed', needsMyVerification: false }
+  ];
+  const pending = Core.filterBugs(bugs, { pendingVerification: true });
+  assert.deepEqual(pending.map((bug) => bug.id).sort(), ['B-1', 'B-2', 'B-3']);
+
+  const focus = Core.dailyFocus({ tasks: [], bugs, releases: [], releasePlans: {} }, FIXED_DATE);
+  assert.deepEqual(focus.bugs.items.map((bug) => bug.id).sort(), pending.map((bug) => bug.id).sort());
+});
+
 test('weekSeries 覆盖连续七天并返回可绘制数据', () => {
   const state = fixedState();
   const week = Core.weekSeries(state, FIXED_DATE);

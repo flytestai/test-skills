@@ -873,9 +873,14 @@
 
       <section class="kpi-grid" aria-label="工作概览">
         <article class="kpi-card kpi-pending" aria-label="今日待验证 Bug">
-          <div class="kpi-top"><span class="kpi-label">今日待验证</span><span class="kpi-icon tint-amber">${icon('shield')}</span></div>
-          <div class="kpi-value">${pendingBugs.length}<small>个</small></div>
-          <div class="kpi-foot">${pendingSevere ? `<span class="danger">${pendingSevere} 个 P0/P1</span>` : '<span class="up">暂无 P0/P1</span>'} · 全部未验证 Bug</div>
+          <button class="kpi-pending-summary" type="button" data-action="kpi-pending" aria-label="查看全部待验证 Bug" title="打开待验证 Bug 列表">
+            <div class="kpi-top"><span class="kpi-label">今日待验证</span><span class="kpi-icon tint-amber">${icon('shield')}</span></div>
+            <div class="kpi-value">${pendingBugs.length}<small>个</small></div>
+            <div class="kpi-foot">
+              <span>${pendingSevere ? `<span class="danger">${pendingSevere} 个 P0/P1</span>` : '<span class="up">暂无 P0/P1</span>'} · 全部未验证 Bug</span>
+              <span class="kpi-jump-hint">查看列表 ${icon('arrow-right')}</span>
+            </div>
+          </button>
           <div class="kpi-pending-list" aria-label="待验证 Bug 列表">
             ${pendingBugs.length ? pendingBugs.map((bug) => `
               <button class="kpi-pending-item" type="button" data-action="open-bug" data-id="${esc(bug.id)}" title="${esc(bug.title)}">
@@ -1591,7 +1596,7 @@
 
   function hasActiveBugFilters() {
     const f = ui.bugFilters;
-    return Boolean(f.q || (f.status && f.status !== 'all') || (f.severity && f.severity !== 'all') || (f.type && f.type !== 'all') || (f.product && f.product !== 'all') || (f.project && f.project !== 'all') || f.version || f.releaseKind);
+    return Boolean(f.q || (f.status && f.status !== 'all') || (f.severity && f.severity !== 'all') || (f.type && f.type !== 'all') || (f.product && f.product !== 'all') || (f.project && f.project !== 'all') || f.version || f.releaseKind || f.pendingVerification);
   }
 
   function bugCountLabel() {
@@ -1669,6 +1674,12 @@
         <span>${f.releaseKind === 'open' ? '未关闭 Bug' : f.releaseKind === 'pending' ? '待验证 Bug' : '全部状态'}</span>
         <span class="release-bug-filter-count">${filteredBugs().length} 个</span>
         <button class="release-bug-filter-clear" type="button" data-action="clear-release-bug-filter" aria-label="清除版本筛选">${icon('close')}清除版本筛选</button>
+      </div>` : ''}
+      ${f.pendingVerification ? `<div class="release-bug-filter">
+        <span class="release-bug-filter-label">${icon('check-circle')}待验证 Bug</span>
+        <span>指派给我、等待我验证的 Bug</span>
+        <span class="release-bug-filter-count">${filteredBugs().length} 个</span>
+        <button class="release-bug-filter-clear" type="button" data-action="clear-pending-filter" aria-label="清除待验证筛选">${icon('close')}清除待验证筛选</button>
       </div>` : ''}
       <div class="result-meta" id="bug-result-count">${bugCountLabel()}</div>
       <div id="bug-results">${bugResultsHtml()}</div>`;
@@ -3981,6 +3992,21 @@
       persistState();
       return;
     }
+    if (action === 'kpi-pending') {
+      ui.bugScope = 'all';
+      ui.bugFilters = {
+        q: '',
+        status: 'all',
+        severity: 'all',
+        type: 'all',
+        product: 'all',
+        project: 'all',
+        pendingVerification: true
+      };
+      navigate('bugs');
+      persistState();
+      return;
+    }
     if (action === 'kpi-bugs') {
       ui.bugScope = 'assigned';
       ui.bugFilters = { q: '', status: 'unclosed', severity: 'all', type: 'all', product: 'all', project: 'all' };
@@ -4054,6 +4080,11 @@
       renderView(false);
       return;
     }
+    if (action === 'clear-pending-filter') {
+      delete ui.bugFilters.pendingVerification;
+      renderView(false);
+      return;
+    }
     if (action === 'toggle-release-closed') {
       const card = actionEl.closest('.release-card');
       const key = actionEl.dataset.key || (card ? card.dataset.releaseKey : '');
@@ -4093,6 +4124,7 @@
       ui.bugScope = ['opened', 'assigned', 'autojob', 'all'].includes(actionEl.dataset.scope) ? actionEl.dataset.scope : 'opened';
       delete ui.bugFilters.version;
       delete ui.bugFilters.releaseKind;
+      delete ui.bugFilters.pendingVerification;
       persistState();
       renderView(false);
       return;

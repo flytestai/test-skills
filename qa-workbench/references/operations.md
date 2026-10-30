@@ -132,6 +132,7 @@ node scripts/qdesk.mjs bugs list --scope all --severity P0 --status unclosed
 node scripts/qdesk.mjs bugs list --scope all --version 2.9.0 --type codeerror
 node scripts/qdesk.mjs bugs list --scope all --assignee weizhen --sort severity --order asc
 node scripts/qdesk.mjs bugs list --scope all --mine
+node scripts/qdesk.mjs bugs list --scope all --pending --format text
 node scripts/qdesk.mjs bugs get 11911
 node scripts/qdesk.mjs bugs nav 11911 --direction next
 node scripts/qdesk.mjs bugs stats --scope opened

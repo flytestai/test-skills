@@ -170,8 +170,9 @@ function usage() {
 Bug:
   bugs list [--scope opened|assigned|autojob|all] [--status ...]
             [--severity ...] [--type ...] [--product ...] [--version ...]
-            [--assignee ...] [--mine] [--q ...] [--sort updated|created|severity|priority]
-            [--order desc|asc] [--limit N|--all]
+            [--assignee ...] [--mine] [--pending] [--q ...]
+            [--sort updated|created|severity|priority] [--order desc|asc]
+            [--limit N|--all]         --pending 只看等待我验证的 Bug
   bugs get <BugID>
   bugs nav <BugID> [--direction prev|next] [同 list 筛选参数]
   bugs stats [--scope ...]
@@ -480,7 +481,10 @@ async function listBugs(options) {
     version: opts.version !== undefined ? opts.version : readOption('version'),
     product: opts.product !== undefined ? opts.product : firstValue('product', 'project'),
     project: opts.project !== undefined ? opts.project : readOption('project'),
-    assignee: opts.assignee !== undefined ? opts.assignee : readOption('assignee')
+    assignee: opts.assignee !== undefined ? opts.assignee : readOption('assignee'),
+    pendingVerification: opts.pendingVerification !== undefined
+      ? opts.pendingVerification
+      : (hasFlag('pending') ? true : undefined)
   });
   if (opts.mine !== undefined ? opts.mine : hasFlag('mine')) {
     bugs = bugs.filter((bug) => bug.isMine);

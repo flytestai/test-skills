@@ -5667,6 +5667,49 @@ kbd {
   flex-direction: column;
 }
 
+.kpi-pending-summary {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kpi-pending-summary:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
+}
+
+.kpi-pending-summary:hover .kpi-label,
+.kpi-pending-summary:focus-visible .kpi-label {
+  color: var(--primary);
+}
+
+.kpi-pending-summary .kpi-foot {
+  gap: 6px;
+}
+
+.kpi-jump-hint {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  color: var(--primary);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.kpi-jump-hint svg {
+  width: 12px;
+  height: 12px;
+}
+
 .kpi-pending-list {
   display: flex;
   flex-direction: column;
