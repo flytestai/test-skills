@@ -154,7 +154,7 @@ function usage() {
 
 任务:
   tasks list [--scope mine|test|all] [--status ...] [--priority ...]
-             [--project ...] [--due today|overdue] [--q ...] [--local]
+             [--project ...] [--due today|overdue] [--q ...] [--local|--remote]
   tasks get <任务ID>
   tasks stats [--scope mine|test|all]
   tasks create --title ... [--description ...] [--start ...] [--end ...]

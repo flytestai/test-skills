@@ -1240,9 +1240,12 @@
     if (!groups.length) return '';
     const active = ui.taskFilters.project || 'all';
     const total = state.allTasks.length;
-    return `<div class="project-strip" aria-label="按项目分类">
-      <button class="project-chip${active === 'all' ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="all">全部项目 <b>${total}</b></button>
-      ${groups.map((group) => `<button class="project-chip${active === group.name ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="${esc(group.name)}" title="${esc(group.status || '')}">${esc(group.name)} <b>${group.taskCount || 0}</b></button>`).join('')}
+    return `<div class="task-project-strip">
+      <span class="task-project-label">${icon('folder')}项目</span>
+      <div class="project-strip" aria-label="按项目分类">
+        <button class="project-chip${active === 'all' ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="all">全部项目 <b>${total}</b></button>
+        ${groups.map((group) => `<button class="project-chip${active === group.name ? ' active' : ''}" type="button" data-action="filter-task-project" data-project="${esc(group.name)}" title="${esc(group.status || '')}">${esc(group.name)} <b>${group.taskCount || 0}</b></button>`).join('')}
+      </div>
     </div>`;
   }
 
@@ -1285,25 +1288,39 @@
     </div>`;
   }
 
+  function taskSourceBadge(task) {
+    const local = Boolean(task.isLocal);
+    return `<span class="task-source-badge ${local ? 'is-local' : 'is-zentao'}">${icon(local ? 'database' : 'refresh')}${local ? '本地任务' : '禅道同步'}</span>`;
+  }
+
   function renderTaskCard(task) {
     const local = Boolean(task.isLocal);
+    const assignee = task.assignee || state.profile.name;
     return `<article class="kanban-card readonly${local ? ' is-local' : ''}${task.pinned ? ' is-pinned' : ''}" data-task-id="${esc(task.id)}">
       <div class="kanban-card-top">
-        ${priorityDot(task.priority)}
-        <span class="type-badge${local ? ' is-local' : ''}">${local ? '本地' : esc(task.type)}</span>
-        ${task.pinned ? `<span class="task-pin-tag">${icon('flag')}置顶</span>` : ''}
-        ${local ? `<button class="card-pin${task.pinned ? ' active' : ''}" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}" aria-label="${task.pinned ? '取消置顶' : '置顶任务'}" title="${task.pinned ? '取消置顶' : '置顶任务'}" aria-pressed="${task.pinned ? 'true' : 'false'}">${icon('flag')}</button>` : ''}
-        <button class="card-menu" type="button" data-action="open-task" data-id="${esc(task.id)}" aria-label="查看任务详情">${icon('more')}</button>
+        <div class="task-card-badges">
+          ${severityBadge(task.priority)}
+          ${taskSourceBadge(task)}
+          ${task.pinned ? `<span class="task-pin-tag">${icon('flag')}置顶</span>` : ''}
+        </div>
+        <div class="task-card-tools">
+          ${local ? `<button class="card-pin${task.pinned ? ' active' : ''}" type="button" data-action="toggle-task-pin" data-id="${esc(task.id)}" aria-label="${task.pinned ? '取消置顶' : '置顶任务'}" title="${task.pinned ? '取消置顶' : '置顶任务'}" aria-pressed="${task.pinned ? 'true' : 'false'}">${icon('flag')}</button>` : ''}
+          <button class="card-menu" type="button" data-action="open-task" data-id="${esc(task.id)}" aria-label="查看任务详情">${icon('more')}</button>
+        </div>
       </div>
       <h3><button type="button" data-action="open-task" data-id="${esc(task.id)}">${esc(task.title)}</button></h3>
       <div class="kanban-meta">
         <span class="project">${esc(task.project)}</span>
-        ${task.execution ? '<span class="sep"></span><span>' + esc(task.execution) + '</span>' : ''}
+        ${task.execution ? '<span class="sep"></span><span class="task-card-exec">' + esc(task.execution) + '</span>' : ''}
+        ${task.type ? `<span class="task-card-type">${esc(task.type)}</span>` : ''}
       </div>
       ${task.tags && task.tags.length ? `<div class="kanban-tags">${tagList(task.tags.slice(0, 3))}</div>` : ''}
       <div class="kanban-footer">
         ${dueChip(task)}
-        <span class="mini-avatar" title="负责人：${esc(task.assignee || state.profile.name)}">${esc(avatarInitial(task.assignee === state.profile.name ? state.profile.avatar : task.assignee))}</span>
+        <span class="task-card-assignee" title="负责人：${esc(assignee)}">
+          <span class="mini-avatar">${esc(avatarInitial(assignee === state.profile.name ? state.profile.avatar : task.assignee))}</span>
+          <span class="task-card-assignee-name">${esc(assignee)}</span>
+        </span>
       </div>
     </article>`;
   }
@@ -1318,8 +1335,12 @@
           <tbody>
             ${tasks.map((task) => `<tr>
               <td class="col-title">
-                <button class="task-title-btn" type="button" data-action="open-task" data-id="${esc(task.id)}">${esc(task.title)}</button>
-                <span class="cell-sub"><span class="mono">${esc(task.displayId || '#' + task.id)}</span><span class="sep"></span>${esc(task.isLocal ? '本地任务' : task.type)}${task.pinned ? '<span class="local-task-tag">置顶</span>' : ''}${task.execution ? '<span class="sep"></span>' + esc(task.execution) : ''}</span>
+                <div class="task-title-line">
+                  ${taskSourceBadge(task)}
+                  <button class="task-title-btn" type="button" data-action="open-task" data-id="${esc(task.id)}">${esc(task.title)}</button>
+                  ${task.pinned ? '<span class="local-task-tag">置顶</span>' : ''}
+                </div>
+                <span class="cell-sub"><span class="mono">${esc(task.displayId || '#' + task.id)}</span><span class="sep"></span>${esc(task.isLocal ? (task.type || '本地任务') : task.type)}${task.execution ? '<span class="sep"></span>' + esc(task.execution) : ''}</span>
               </td>
               <td>${taskStatusPill(task.status)}</td>
               <td>${severityBadge(task.priority)}</td>
@@ -1344,7 +1365,7 @@
 
   function hasActiveTaskFilters() {
     const f = ui.taskFilters;
-    return Boolean(f.q || (f.priority && f.priority !== 'all') || (f.project && f.project !== 'all') || (f.due && f.due !== 'all'));
+    return Boolean(f.q || (f.priority && f.priority !== 'all') || (f.source && f.source !== 'all') || (f.project && f.project !== 'all') || (f.due && f.due !== 'all'));
   }
 
   function updateTaskCount() {
@@ -1363,35 +1384,44 @@
 
   function renderTasks() {
     const f = ui.taskFilters;
-    const projectNames = Array.from(new Set([
-      ...(state.projectList || []).map((project) => project.name),
-      ...visibleTasks().map((task) => task.project)
-    ].filter(Boolean)));
+    const scopedTasks = visibleTasks();
+    const localCount = scopedTasks.filter((task) => task.isLocal).length;
+    const source = f.source || 'all';
     return `${taskScopeRow()}
-    ${taskProjectStrip()}
-    <div class="page-toolbar">
-      <div class="search-field">
-        ${icon('search')}
-        <input id="task-search" type="search" value="${esc(f.q)}" placeholder="搜索任务、项目或执行…" autocomplete="off" aria-label="搜索任务">
+    <div class="task-toolbar">
+      <div class="task-toolbar-main">
+        <div class="search-field">
+          ${icon('search')}
+          <input id="task-search" type="search" value="${esc(f.q)}" placeholder="搜索任务、项目或执行…" autocomplete="off" aria-label="搜索任务">
+        </div>
+        <select class="select" data-filter="task-source" aria-label="按任务来源筛选">
+          <option value="all"${source === 'all' ? ' selected' : ''}>全部来源（${scopedTasks.length}）</option>
+          <option value="zentao"${source === 'zentao' ? ' selected' : ''}>禅道同步（${scopedTasks.length - localCount}）</option>
+          <option value="local"${source === 'local' ? ' selected' : ''}>QDesk 本地（${localCount}）</option>
+        </select>
+        <select class="select" data-filter="task-priority" aria-label="按优先级筛选">
+          <option value="all">全部优先级</option>
+          ${Object.keys(Core.SEVERITY).map((key) => `<option value="${key}"${f.priority === key ? ' selected' : ''}>${Core.SEVERITY[key].label}</option>`).join('')}
+        </select>
+        <button class="filter-chip${f.due === 'today' ? ' active' : ''}" type="button" data-action="toggle-task-due" style="height:37px;border:1px solid var(--line-strong);background:${f.due === 'today' ? '#fff' : 'rgba(255,255,255,.65)'}">${icon('calendar')} 今日到期</button>
+        <div class="toolbar-spacer"></div>
+        <button class="btn btn-primary task-create-btn" type="button" data-action="create-task">${icon('plus')}新建任务</button>
       </div>
-      <select class="select" data-filter="task-priority" aria-label="按优先级筛选">
-        <option value="all">全部优先级</option>
-        ${Object.keys(Core.SEVERITY).map((key) => `<option value="${key}"${f.priority === key ? ' selected' : ''}>${Core.SEVERITY[key].label}</option>`).join('')}
-      </select>
-      <select class="select" data-filter="task-project" aria-label="按项目筛选">
-        <option value="all">全部项目</option>
-        ${projectNames.map((project) => `<option value="${esc(project)}"${f.project === project ? ' selected' : ''}>${esc(project)}</option>`).join('')}
-      </select>
-      <button class="filter-chip${f.due === 'today' ? ' active' : ''}" type="button" data-action="toggle-task-due" style="height:37px;border:1px solid var(--line-strong);background:${f.due === 'today' ? '#fff' : 'rgba(255,255,255,.65)'}">${icon('calendar')} 今日到期</button>
-      <div class="toolbar-spacer"></div>
-      <button class="btn btn-primary task-create-btn" type="button" data-action="create-task">${icon('plus')}新建任务</button>
-      <div class="segmented" role="group" aria-label="任务视图">
-        <button type="button" data-action="set-task-view" data-view="board" class="${ui.taskView === 'board' ? 'active' : ''}">${icon('columns')}看板</button>
-        <button type="button" data-action="set-task-view" data-view="list" class="${ui.taskView === 'list' ? 'active' : ''}">${icon('list')}列表</button>
+      <div class="task-toolbar-secondary">
+        ${taskProjectStrip()}
+        <div class="task-view-actions">
+          <div class="segmented" role="group" aria-label="任务视图">
+            <button type="button" data-action="set-task-view" data-view="board" class="${ui.taskView === 'board' ? 'active' : ''}">${icon('columns')}看板</button>
+            <button type="button" data-action="set-task-view" data-view="list" class="${ui.taskView === 'list' ? 'active' : ''}">${icon('list')}列表</button>
+          </div>
+          <button class="btn" type="button" data-action="sync-zentao">${icon('refresh')}刷新禅道</button>
+        </div>
       </div>
-      <button class="btn" type="button" data-action="sync-zentao">${icon('refresh')}刷新禅道</button>
     </div>
-    <div class="result-meta" id="task-result-count">${taskCountLabel()}</div>
+    <div class="task-toolbar-meta">
+      <span class="result-meta" id="task-result-count">${taskCountLabel()}</span>
+      <span class="task-source-note">${icon('shield')}本地任务仅保存在 QDesk，不会同步到禅道</span>
+    </div>
     <div id="task-results">${taskResultsHtml()}</div>`;
   }
 
@@ -4235,6 +4265,11 @@
     }
     if (target.matches('[data-filter="task-priority"]')) {
       ui.taskFilters.priority = target.value;
+      renderTaskResults();
+      return;
+    }
+    if (target.matches('[data-filter="task-source"]')) {
+      ui.taskFilters.source = target.value;
       renderTaskResults();
       return;
     }

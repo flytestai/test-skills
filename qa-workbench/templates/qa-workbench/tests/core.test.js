@@ -354,6 +354,17 @@ test('筛选器支持关键词、优先级、项目和逾期条件', () => {
   assert.ok(unclosed.length < state.bugs.length);
 });
 
+test('filterTasks 区分禅道任务与 QDesk 本地任务', () => {
+  const tasks = [
+    { id: 'T-1', title: '禅道任务', status: 'doing', priority: 'P1', project: 'PC', tags: [] },
+    { id: 'LT-1', title: '本地任务', status: 'todo', priority: 'P2', project: '本地', isLocal: true, tags: [] },
+    { id: 'LT-2', title: '本地完成任务', status: 'done', priority: 'P3', project: '本地', isLocal: true, tags: [] }
+  ];
+  assert.deepEqual(Core.filterTasks(tasks, { source: 'local' }).map((task) => task.id).sort(), ['LT-1', 'LT-2']);
+  assert.deepEqual(Core.filterTasks(tasks, { source: 'zentao' }).map((task) => task.id), ['T-1']);
+  assert.equal(Core.filterTasks(tasks, { source: 'all' }).length, 3);
+});
+
 test('filterTasks 置顶任务始终排在普通任务之前', () => {
   const tasks = [
     { id: 'T-1', title: '普通高优任务', status: 'doing', priority: 'P0', pinned: false, updatedAt: '2026-10-29T10:00:00.000Z', tags: [] },
