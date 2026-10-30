@@ -331,7 +331,7 @@ const BUG_FIELDS = [
   'severity', 'pri', 'type', 'os', 'browser', 'hardware', 'found', 'steps', 'status',
   'confirmed', 'openedBy', 'openedDate', 'openedBuild', 'assignedTo', 'assignedDate',
   'deadline', 'resolvedBy', 'resolution', 'resolvedDate', 'closedBy', 'closedDate',
-  'lastEditedDate', 'activatedCount', 'activatedDate'
+  'lastEditedBy', 'lastEditedDate', 'activatedCount', 'activatedDate'
 ].join(',');
 
 async function listBugs(productId, options) {

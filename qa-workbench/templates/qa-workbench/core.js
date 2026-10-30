@@ -59,6 +59,14 @@
     return localDate(d);
   }
 
+  // 工作日默认取当天；周末回退到最近的周五。
+  function workdayDate(value) {
+    const d = value instanceof Date ? new Date(value.getTime()) : value ? new Date(value) : new Date();
+    if (Number.isNaN(d.getTime())) return workdayDate(new Date());
+    while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() - 1);
+    return localDate(d);
+  }
+
   function nowIso() {
     return new Date().toISOString();
   }
@@ -1066,31 +1074,69 @@
     const releases = Array.isArray(state.releases) && state.releases.length
       ? state.releases
       : releaseCatalog({ tasks: allTasks, bugs: allBugs }, state.releasePlans || {});
-    const scheduled = releases.filter((item) => (
-      !item.closed && (item.testStart || item.testEnd)
-    ));
+    const completedToday = (item) => {
+      if (item.closed) return localDate(item.planUpdatedAt) === day;
+      if (item.status !== 'ended') return false;
+      return Boolean(item.testEnd) && localDate(item.testEnd) === day;
+    };
+    // 已结束或已关闭的版本不再出现在当天日报；只有结束/关闭当天保留一行“测试完成”。
+    const scheduled = releases.filter((item) => {
+      if (!item.testStart && !item.testEnd) return false;
+      if (completedToday(item)) return true;
+      if (item.closed || item.status === 'ended') return false;
+      return true;
+    });
     if (!scheduled.length) return [];
+    const active = scheduled.filter((item) => !completedToday(item));
     const focus = dailyFocus({
       tasks: allTasks,
       bugs: allBugs,
-      releases: scheduled,
+      releases: active,
       tester: state.tester || null
     }, day);
     const progressMap = new Map(focus.versions.items.map((item) => [item.key, item.progress]));
     const bugs = Array.isArray(scopedBugs) ? scopedBugs : [];
     return scheduled.map((item) => {
+      if (completedToday(item)) {
+        return {
+          key: item.key,
+          name: item.name,
+          completed: true,
+          progress: 0,
+          dailyOnly: false,
+          submitted: 0,
+          verified: 0,
+          remaining: 0
+        };
+      }
       const progress = progressMap.has(item.key) ? progressMap.get(item.key) : item.taskProgress;
+      // 只设置了开始时间、还没设置结束时间的版本，日报只统计当天提交与验证的 Bug，不统计版本进度。
+      const dailyOnly = Boolean(item.testStart) && !item.testEnd;
       return {
         key: item.key,
         name: item.name,
+        completed: false,
         progress,
+        dailyOnly,
+        submitted: bugs.filter((bug) => (
+          localDate(bug.createdAt) === day && versionKey(bug.version) === item.key
+        )).length,
+        verified: bugs.filter((bug) => (
+          bug.verifiedAt && localDate(bug.verifiedAt) === day && versionKey(bug.version) === item.key
+        )).length,
         remaining: bugs.filter((bug) => isBugOpen(bug) && versionKey(bug.version) === item.key).length
       };
     });
   }
 
   function reportAutojobBlock(state, day) {
-    const items = state.autojobBugs || (state.autojob && state.autojob.bugs) || [];
+    const direct = state.autojobBugs || (state.autojob && state.autojob.bugs) || [];
+    const daily = (state.autojob && state.autojob.dailyBugs) || [];
+    const merged = new Map();
+    [...direct, ...daily].forEach((bug) => {
+      if (bug && bug.id != null) merged.set(String(bug.id), bug);
+    });
+    const items = Array.from(merged.values());
     const account = String((state.tester && state.tester.account) || '');
     const autojobAccounts = new Set([]
       .concat((state.autojob && state.autojob.accounts) || [])
@@ -1110,7 +1156,7 @@
       ));
       return historyAssigned || (bug.updatedAt && localDate(bug.updatedAt) === day);
     }).length;
-    return `今日新增：${createdToday}\n验证已关闭BUG：${closedToday}\n指派开发：${assignedToday}`;
+    return `今日新增：${createdToday}个\n验证已关闭BUG：${closedToday}个\n指派开发：${assignedToday}个`;
   }
 
   function buildReport(state, date) {
@@ -1169,26 +1215,50 @@
     });
 
     const versionStats = reportVersionStats(state, day, bugs);
-    const multipleVersions = versionStats.length > 1;
+    const activeVersions = versionStats.filter((item) => !item.completed);
+    // 每个版本行只写一次当天新增/验证数量；有多个版本时也各自展示，不再输出汇总的 Bug 概览行。
     const versionLines = versionStats.length
-      ? versionStats.map((item) => (
-        `${item.name}版本测试进度：${item.progress}%`
-        + (multipleVersions ? `  剩余未关闭bug：${item.remaining}` : '')
-      )).join('\n')
-      : '暂无已设置测试时间的版本';
-    const bugSummary = `今日新增bug：${data.foundBugs.length}  验收bug：${data.closedBugs.length}`
-      + (versionStats.length && !multipleVersions ? `  剩余未关闭bug：${versionStats[0].remaining}` : '');
+      ? versionStats.map((item) => {
+        if (item.completed) return `${item.name}版本测试完成`;
+        const daily = `新增bug：${item.submitted}个  验证已修复bug：${item.verified}个`;
+        if (item.dailyOnly) return `${item.name}版本${daily}`;
+        return `${item.name}版本测试进度：${item.progress}%  ${daily}  剩余未关闭bug：${item.remaining}个`;
+      }).join('\n')
+      : '暂无进行中的测试版本';
+    // 只有一个进行中的版本时，Bug 概览与版本行保持同一范围。
+    const singleVersion = activeVersions.length === 1 ? activeVersions[0] : null;
+    const sameVersion = (bug) => !singleVersion
+      || versionKey(bug.version) === singleVersion.key;
+    const foundCount = singleVersion
+      ? data.foundBugs.filter(sameVersion).length
+      : data.foundBugs.length;
+    // “验收bug”与版本行的“验证已修复bug”使用同一口径，避免复制后数字不一致。
+    const verifiedCount = singleVersion
+      ? data.verifiedBugs.filter(sameVersion).length
+      : data.verifiedBugs.length;
+    // 版本行已经逐版本写了新增/验证数量，不再重复输出一行 Bug 概览；
+    // 没有进行中的版本时，才用 Bug 概览保留当天总量。
+    const bugSummary = activeVersions.length
+      ? ''
+      : `今日新增bug：${foundCount}个  验收bug：${verifiedCount}个`;
     const reportTasks = reportTaskItems(reportState, day);
-    const taskLines = reportTasks.map((task, index) => (
-      `${index + 1}.${task.title}  完成进度：${reportTaskProgress(task)}%`
-    ));
+    const taskLines = reportTasks.map((task, index) => {
+      // 没填写任务结束时间（截止日期）且尚未完成的任务，不展示完成进度。
+      const hasEnd = Boolean(task.dueDate || task.completedAt);
+      // 还没开始（待开始且无已消耗工时）的任务，即使有截止日期也不展示 0%。
+      const started = task.status !== 'todo'
+        || Boolean(task.completedAt)
+        || Number(task.consumed) > 0;
+      const progress = hasEnd && started ? `  完成进度：${reportTaskProgress(task)}%` : '';
+      return `${index + 1}.${task.title}${progress}`;
+    });
     const autojobBlock = reportAutojobBlock(reportState, day);
 
     const summaryBits = [];
     const firstVersion = versionLines.split('\n')[0];
-    if (firstVersion && firstVersion !== '暂无已设置测试时间的版本') summaryBits.push(firstVersion);
-    summaryBits.push(`今日新增 ${data.foundBugs.length} 个 Bug`);
-    summaryBits.push(`验收 ${data.closedBugs.length} 个 Bug`);
+    if (firstVersion && firstVersion !== '暂无进行中的测试版本') summaryBits.push(firstVersion);
+    summaryBits.push(`今日新增 ${foundCount} 个 Bug`);
+    summaryBits.push(`验收 ${verifiedCount} 个 Bug`);
     if (reportTasks.length) summaryBits.push(`${reportTasks.length} 项任务有进展`);
     const summary = summaryBits.join('，') + '。';
 
@@ -1229,16 +1299,21 @@
       .split('\n')
       .map((line) => line.trim())
       .filter((line) => /^今日新增：|^验证已关闭BUG：/.test(line));
-    return [
-      String(content.version || '暂无已设置测试时间的版本').trim(),
-      String(content.bugsSummary || '今日新增bug：0  验收bug：0').trim(),
+    // 只设置开始时间的单版本会把新增/验证写在版本行，bugsSummary 为空时不再重复输出。
+    const summaryLine = Object.prototype.hasOwnProperty.call(content, 'bugsSummary')
+      ? String(content.bugsSummary || '').trim()
+      : '今日新增bug：0个  验收bug：0个';
+    const lines = [String(content.version || '暂无进行中的测试版本').trim()];
+    if (summaryLine) lines.push(summaryLine);
+    lines.push(
       '',
-      '今日任务:',
-      String(content.tasks || '').trim() || '暂无今日任务记录',
+      '当日测试任务:',
+      String(content.tasks || '').trim() || '暂无当日测试任务记录',
       '',
       'AI客服今日：',
-      autojobLines.length ? autojobLines.join('\n') : '今日新增：0\n验证已关闭BUG：0'
-    ].join('\n');
+      autojobLines.length ? autojobLines.join('\n') : '今日新增：0个\n验证已关闭BUG：0个'
+    );
+    return lines.join('\n');
   }
 
   function renderReportMarkdown(report, profile) {
@@ -1254,18 +1329,22 @@
       ''
     ];
     if (templateReport) {
-      return header.concat([
-        String(content.version || '暂无已设置测试时间的版本').trim(),
-        String(content.bugsSummary || '今日新增bug：0  验收bug：0').trim(),
+      const summaryLine = Object.prototype.hasOwnProperty.call(content, 'bugsSummary')
+        ? String(content.bugsSummary || '').trim()
+        : '今日新增bug：0个  验收bug：0个';
+      const lines = [String(content.version || '暂无进行中的测试版本').trim()];
+      if (summaryLine) lines.push(summaryLine);
+      lines.push(
         '',
-        '今日任务:',
-        String(content.tasks || '').trim() || '暂无今日任务记录',
+        '当日测试任务:',
+        String(content.tasks || '').trim() || '暂无当日测试任务记录',
         '',
         'AI客服今日：',
-        String(content.autojob || '').trim() || '今日新增：0\n验证已关闭BUG：0\n指派开发：0',
+        String(content.autojob || '').trim() || '今日新增：0个\n验证已关闭BUG：0个\n指派开发：0个',
         '---',
         '由 QDesk 测试工作台生成'
-      ]).join('\n');
+      );
+      return header.concat(lines).join('\n');
     }
     return header.concat([
       section('', '今日摘要', content.summary),
@@ -1814,6 +1893,7 @@
     localDate,
     dateAt,
     addDays,
+    workdayDate,
     nowIso,
     formatDateCN,
     relativeDay,

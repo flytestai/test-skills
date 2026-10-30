@@ -235,7 +235,7 @@
         taskFilters: { q: '', status: 'all', priority: 'all', project: 'all', due: 'all' },
         bugFilters: { q: '', status: 'all', severity: 'all', type: 'all', product: 'all' },
         bugSort: { key: 'updatedAt', dir: 'desc' },
-        reportDate: Core.localDate(),
+        reportDate: Core.workdayDate(),
         drawer: null
       };
     }
@@ -252,11 +252,8 @@
       ? { key: local.bugSort.key, dir: local.bugSort.dir === 'asc' ? 'asc' : 'desc' }
       : ui.bugSort;
     syncing = Boolean(state.syncState && state.syncState.syncing);
-    const reportDate = local.reportDate || priorDate;
-    ui.reportDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : Core.localDate();
-    if (!state.reports.some((report) => report.date === ui.reportDate) && state.reports.length) {
-      ui.reportDate = state.reports[0].date;
-    }
+    const reportDate = priorDate;
+    ui.reportDate = reportDate && /^\d{4}-\d{2}-\d{2}$/.test(reportDate) ? reportDate : Core.workdayDate();
   }
 
   function setSyncChrome() {
@@ -652,6 +649,8 @@
     closeSidebar();
     if (!VIEWS.includes(view)) view = 'dashboard';
     ui.view = view;
+    // 每次打开工作日报，默认定位到工作日当天的日报。
+    if (view === 'reports') ui.reportDate = Core.workdayDate();
     ui.bugDetailId = null;
     ui.bugEditing = false;
     const nextHash = `#/${view}`;
@@ -2285,11 +2284,15 @@
       </div>
       <textarea id="${id}" name="${id.replace('report-', '')}"${className ? ` class="${className}"` : ''} placeholder="${esc(placeholder)}">${esc(value || '')}</textarea>
     </div>`;
+    // 只设置开始时间的单版本已把新增/验证写在版本行，Bug 概览为空时不再重复展示。
+    const bugSummarySection = String(content.bugsSummary || '').trim()
+      ? sectionHtml('02', 'report-bugsSummary', 'Bug 概览', '今日新增、验收关闭与剩余未关闭', content.bugsSummary, '3.0.0版本今日新增bug：0个  验收bug：0个  剩余未关闭bug：0个')
+      : '';
     const templateSections = [
-      sectionHtml('01', 'report-version', '版本测试进度', '只展示已设置测试时间的版本', content.version, '2.9.0版本测试进度：50%'),
-      sectionHtml('02', 'report-bugsSummary', 'Bug 概览', '今日新增、验收关闭与剩余未关闭', content.bugsSummary, '今日新增bug：0  验收bug：0  剩余未关闭bug：0'),
-      sectionHtml('03', 'report-tasks', '今日任务', '每行一个任务，附完成进度', content.tasks, '1.任务标题  完成进度：50%'),
-      sectionHtml('04', 'report-autojob', 'AI客服今日', '今日新增、验证已关闭、指派开发', content.autojob, '今日新增：0\n验证已关闭BUG：0\n指派开发：0'),
+      sectionHtml('01', 'report-version', '版本测试进度', '未设置结束时间的版本只统计今日提交与验证 Bug', content.version, '2.9.0版本测试进度：50%'),
+      bugSummarySection,
+      sectionHtml('03', 'report-tasks', '当日测试任务', '每行一个测试任务，附完成进度', content.tasks, '1.任务标题  完成进度：50%'),
+      sectionHtml('04', 'report-autojob', 'AI客服今日', '今日新增、验证已关闭、指派开发', content.autojob, '今日新增：0个\n验证已关闭BUG：0个\n指派开发：0个'),
       sectionHtml('05', 'report-summary', '今日摘要', '用于日报列表和通知预览', content.summary, '一句话概括今天的测试产出', 'summary-area')
     ].join('');
     const legacySections = [
@@ -2307,7 +2310,7 @@
         ['测试版本', versionCount],
         ['今日新增', data.foundBugs.length],
         ['验收关闭', data.closedBugs.length],
-        ['今日任务', taskCount]
+        ['当日测试任务', taskCount]
       ]
       : [
         ['完成任务', data.doneTasks.length],
@@ -2340,7 +2343,7 @@
         ${templateReport ? templateSections : legacySections}
         <div class="report-form-footer">
           <div class="report-form-note">
-            <span class="report-status-line" style="margin:0"><i class="report-status-dot ${report.status === 'submitted' ? 'submitted' : ''}"></i>${statusLabel} · 最后更新 ${esc(fmtDateTime(report.updatedAt))}</span>
+            <span class="report-status-line" style="margin:0"><i class="report-status-dot ${report.status === 'submitted' ? 'submitted' : ''}"></i>${statusLabel} · 最后更新 ${esc(fmtDateTime(report.updatedAt))} · 工作日 21:00 自动提交</span>
           </div>
           <div class="report-form-actions">
             ${report.status === 'submitted' ? `<button class="btn" type="button" data-action="report-reopen">${icon('edit')}转为草稿</button>` : ''}
@@ -2373,7 +2376,7 @@
           </div>
           <button class="btn btn-primary btn-lg" type="button" data-action="report-generate">${icon('sparkles')}生成这一天的日报</button>
         </div>
-        <div class="report-empty-note">${icon('shield')}日报只保存在本机，不会自动提交到禅道。</div>
+        <div class="report-empty-note">${icon('shield')}日报保存在本机；工作日 21:00 自动提交，提交后数据仍会持续更新。</div>
       </div>
       <aside class="report-preview" aria-label="今日可采集内容">
         <div class="report-preview-head"><span>可采集内容</span><b>${previewCount} 条记录</b></div>
@@ -2462,7 +2465,7 @@
 
   async function generateReport(date) {
     if (!guardReady()) return;
-    const day = date || Core.localDate();
+    const day = date || Core.workdayDate();
     let report = state.reports.find((item) => item.date === day);
     if (!report) {
       report = Core.buildReport(state, day);
@@ -2477,8 +2480,11 @@
     }
     ui.reportDate = day;
     persistState();
-    navigate('reports');
-    renderView(true);
+    if (ui.view === 'reports') {
+      renderView(true);
+    } else {
+      navigate('reports');
+    }
   }
 
   /* =========================================================
@@ -3797,7 +3803,7 @@
     const actions = [
       { group: '操作', label: '同步禅道数据', sub: '后台刷新测试任务、Bug 与分类统计', icon: 'refresh', tint: 'tint-blue', run: () => startManualSync() },
       { group: '操作', label: '登记 Bug', sub: '选择产品后写入禅道', icon: 'bug', tint: 'tint-red', run: () => openBugModal() },
-      { group: '操作', label: '生成今日日报', sub: '自动汇总任务与 Bug 进展', icon: 'sparkles', tint: 'tint-teal', run: () => generateReport(Core.localDate()) }
+      { group: '操作', label: '生成今日日报', sub: '自动汇总任务与 Bug 进展', icon: 'sparkles', tint: 'tint-teal', run: () => generateReport(Core.workdayDate()) }
     ];
     const pages = [
       { group: '页面', label: 'QDesk 工作台', sub: '查看今日聚焦与质量概览', icon: 'home', tint: 'tint-blue', run: () => navigate('dashboard') },
@@ -3959,7 +3965,7 @@
     }
     if (action === 'create-task') { closeQuickMenu(); closeNotifications(); openTaskModal(); return; }
     if (action === 'create-bug') { closeQuickMenu(); closeNotifications(); openBugModal(); return; }
-    if (action === 'create-report') { closeQuickMenu(); closeNotifications(); generateReport(Core.localDate()); return; }
+    if (action === 'create-report') { closeQuickMenu(); closeNotifications(); generateReport(Core.workdayDate()); return; }
     if (action === 'report-generate') { generateReport(ui.reportDate); return; }
     if (action === 'report-today') { ui.reportDate = Core.localDate(); closeNotifications(); navigate('reports'); return; }
     if (action === 'open-task') { openTaskDrawer(actionEl.dataset.id); return; }

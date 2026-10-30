@@ -287,6 +287,7 @@ function normalizeBug(raw, context) {
   const assignedTo = String(bug.assignedTo || '');
   const resolvedBy = String(bug.resolvedBy || '');
   const closedBy = String(bug.closedBy || '');
+  const lastEditedBy = String(bug.lastEditedBy || '');
   const autojobAccounts = ctx.autojobAccounts instanceof Set
     ? ctx.autojobAccounts
     : new Set(ctx.autojobAccounts || []);
@@ -352,6 +353,8 @@ function normalizeBug(raw, context) {
     resolvedByName: realName(users, resolvedBy),
     closedByAccount: closedBy,
     closedByName: realName(users, closedBy),
+    lastEditedByAccount: lastEditedBy,
+    lastEditedByName: realName(users, lastEditedBy),
     isAutojob,
     sourceLabel: isAutojob ? 'AI 客服提取' : '',
     sourceDetail: isAutojob ? '客服群聊记录自动提取' : '',
@@ -441,17 +444,21 @@ function autojobRelation(bug, account) {
   if (bug.assigneeAccount === account) return 'assigned';
   if (bug.resolvedByAccount === account) return 'resolved';
   if (bug.closedByAccount === account) return 'closed';
+  // 指派给我后又被我转给别人的 Bug，当前指派人已不是我，但最后编辑人仍是当前账号。
+  if (bug.lastEditedByAccount === account) return 'handled';
   return '';
 }
 
 function buildAutojobStats(items, account) {
   const all = items || [];
-  const related = all
+  const touched = all
     .map((bug) => {
       const relation = autojobRelation(bug, account);
       return relation ? { ...bug, autojobRelation: relation } : null;
     })
     .filter(Boolean);
+  // 指派/解决/关闭过我名的 Bug 参与看板统计；只是被我转给别人的记为“我处理过”，只参与日报当日数量。
+  const related = touched.filter((bug) => bug.autojobRelation !== 'handled');
   const active = related.filter((bug) => bug.rawStatus === 'active');
   const resolved = related.filter((bug) => bug.rawStatus === 'resolved');
   const pendingVerification = resolved.filter((bug) => bug.needsMyVerification);
@@ -476,20 +483,42 @@ function buildAutojobStats(items, account) {
     highPriorityActive: active.filter((bug) => bug.pri === 'P0' || bug.pri === 'P1').length,
     p0Open: open.filter((bug) => bug.severity === 'P0').length,
     p1Open: open.filter((bug) => bug.severity === 'P1').length,
-    createdToday: related.filter((bug) => localDate(bug.createdAt) === today).length,
-    createdLast7Days: related.filter((bug) => localDate(bug.createdAt) >= sevenDayKey).length,
+    // 当天新增/关闭按“我处理过的”统计：指派给我后转给别人的也计入。
+    createdToday: touched.filter((bug) => localDate(bug.createdAt) === today).length,
+    createdLast7Days: touched.filter((bug) => localDate(bug.createdAt) >= sevenDayKey).length,
     assigned: related.filter((bug) => bug.autojobRelation === 'assigned').length,
+    handled: touched.filter((bug) => bug.autojobRelation === 'handled').length,
     closedByMe: related.filter((bug) => bug.autojobRelation === 'closed').length,
     allTotal: all.length,
     allOpen: all.filter((bug) => bug.rawStatus !== 'closed').length,
     allClosed: all.filter((bug) => bug.rawStatus === 'closed').length,
-    byProduct: groupCount(related, (bug) => bug.project || bug.productId || '未分类', (bug) => bug.project || '未分类'),
-    byRelation: groupCount(related, (bug) => bug.autojobRelation, (bug) => ({
+    allCreatedToday: all.filter((bug) => localDate(bug.createdAt) === today).length,
+    allClosedToday: all.filter((bug) => bug.closedAt && localDate(bug.closedAt) === today).length,
+    allResolvedToday: all.filter((bug) => bug.resolvedAt && localDate(bug.resolvedAt) === today).length,
+    byProduct: groupCount(touched, (bug) => bug.project || bug.productId || '未分类', (bug) => bug.project || '未分类'),
+    byRelation: groupCount(touched, (bug) => bug.autojobRelation, (bug) => ({
       assigned: '指派给我',
       resolved: '我已解决',
-      closed: '我已关闭'
+      closed: '我已关闭',
+      handled: '我处理过'
     }[bug.autojobRelation] || bug.autojobRelation))
   };
+}
+
+// 指派给我后又被我转给别人的 AI 客服 Bug，当前指派人已不是我；
+// 单独挑出当天新建或关闭的记录，供日报的“今日新增/验证关闭”统计。
+function autojobDailyBugs(items, account, day) {
+  const target = day || localDate();
+  return (items || [])
+    .map((bug) => {
+      const relation = autojobRelation(bug, account);
+      return relation === 'handled' ? { ...bug, autojobRelation: relation } : null;
+    })
+    .filter(Boolean)
+    .filter((bug) => (
+      localDate(bug.createdAt) === target
+      || (bug.closedAt && localDate(bug.closedAt) === target)
+    ));
 }
 
 function buildTaskStats(items) {
@@ -526,6 +555,7 @@ module.exports = {
   normalizeTask,
   normalizeBug,
   autojobRelation,
+  autojobDailyBugs,
   buildBugStats,
   buildAutojobStats,
   buildTaskStats
