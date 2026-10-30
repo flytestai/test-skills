@@ -142,7 +142,7 @@ function usage() {
 
 服务与总览:
   status                         服务、同步、账号与数据量
-  sync [--wait]                  触发后台同步，--wait 等待完成
+  sync [--wait] [--timeout 秒]   触发后台同步，--wait 等待完成
   bootstrap [--full]             本地快照概览或完整数据
   dashboard                      当日进度、指标与提醒
   metrics                        当日指标
@@ -190,7 +190,8 @@ Bug:
   bugs confirm <BugID> [--pri ...] [--type ...] [--deadline ...] [--assigned-to ...] [--comment ...]
   bugs delete <BugID> --yes
   bugs plan-close --ids 1,2,3        只读生成可关闭清单，不关闭
-  bugs close-many --ids 1,2,3 --yes  仅关闭全部属于当前账号的 Bug
+  bugs close-many --ids 1,2,3 --yes [--allow-large]
+                                     仅关闭全部属于当前账号的 Bug
 
 发版:
   releases list
