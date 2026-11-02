@@ -327,9 +327,8 @@ test('buildReminderPreview 区分首次与重复提醒并输出距上次提醒�
   assert.equal(preview.repeatCount, 1);
   assert.equal(preview.firstCount, 1);
   assert.equal(preview.groups[0].repeatCount, 1);
-  assert.match(preview.groups[0].message, /#1 /);
-  assert.match(preview.groups[0].message, /距上次提醒：4 天/);
-  assert.doesNotMatch(preview.groups[0].message, /#2 /);
+  assert.match(preview.groups[0].message, /你有 2 个 Bug 已超期，最长 12 天未处理！请尽快修复并更新禅道状态！/);
+  assert.doesNotMatch(preview.groups[0].message, /#1 /);
 
   const filtered = Reminders.filterReminderPreview(preview, ['suntao']);
   assert.equal(filtered.repeatCount, 1);
@@ -360,10 +359,10 @@ test('selectReminderBugs 只选择我提交、已指派给开发且超过阈值�
   assert.equal(selected.find((item) => item.id === '6').days, 6);
 });
 
-test('buildReminderPreview 按开发分组并包含版本、模块、总数和未处理天数', () => {
+test('buildReminderPreview 按开发分组并生成简短的版本、数量和最长未处理天数摘要', () => {
   const config = Reminders.normalizeReminderConfig({
     thresholdDays: 3,
-    mentionMap: { suntao: 'SunTao' }
+    mentionMap: { 孙涛: 'SunTao' }
   }, null, { strict: true });
   const preview = Reminders.buildReminderPreview({
     account: ACCOUNT,
@@ -383,35 +382,35 @@ test('buildReminderPreview 按开发分组并包含版本、模块、总数和�
   assert.equal(suntao.count, 2);
   assert.equal(suntao.maxDays, 7);
   assert.equal(suntao.mention, 'SunTao');
-  assert.match(suntao.message, /@孙涛/);
-  assert.match(suntao.message, /@孙涛 以下 2 个 Bug 已超期未处理，请尽快修复。/);
+  assert.equal(suntao.mentionMapped, true);
+  assert.match(suntao.message, /@孙涛\s+产品：新好人好股PC客户端\s+版本：3\.0\.0\s+你有 2 个 Bug 已超期，最长 7 天未处理！请尽快修复并更新禅道状态！/);
   assert.doesNotMatch(suntao.message, /提醒阈值/);
   assert.doesNotMatch(suntao.message, /技术处理/);
-  assert.match(suntao.message, /#12021/);
-  assert.match(suntao.message, /版本：3\.0\.0/);
-  assert.match(suntao.message, /模块：自选/);
-  assert.match(suntao.message, /未处理：5 天/);
-  assert.match(suntao.message, /合计：2 个 Bug/);
+  assert.doesNotMatch(suntao.message, /#12021/);
+  assert.doesNotMatch(suntao.message, /合计：/);
+  assert.deepEqual(Reminders.buildWecomPayload(suntao, suntao.message).text.mentioned_list, ['SunTao']);
   const liming = preview.groups.find((group) => group.account === 'liming');
   assert.equal(liming.mention, 'liming');
+  assert.equal(liming.mentionMapped, false);
+  assert.equal(preview.mentionUnmappedCount, 1);
 });
 
-test('长列表按企微 2048 字节限制拆分，并在每页保留开发与总数', () => {
+test('长列表简化为单条摘要，不再把全部 Bug 标题塞进群消息', () => {
   const bugs = Array.from({ length: 40 }, (_, index) => bug({
     id: String(13000 + index),
-    title: `【自选股】第 ${index + 1} 个超期 Bug 的标题比较长，用于验证消息拆分逻辑`,
+    title: `【自选股】第 ${index + 1} 个超期 Bug 的标题比较长，用于验证消息摘要逻辑`,
     assignedAt: daysAgo(4 + (index % 5))
   }));
   const config = Reminders.normalizeReminderConfig({ thresholdDays: 3 }, null, { strict: true });
   const preview = Reminders.buildReminderPreview({ account: ACCOUNT, config, now: NOW, bugs });
   const group = preview.groups[0];
-  assert.ok(group.messages.length > 1);
-  group.messages.forEach((message, index) => {
-    assert.ok(Buffer.byteLength(message, 'utf8') <= Reminders.WECOM_TEXT_LIMIT);
-    assert.match(message, /@孙涛/);
-    assert.match(message, /合计：40 个 Bug/);
-    assert.match(message, new RegExp(`（${index + 1}/${group.messages.length}）`));
-  });
+  assert.equal(group.messages.length, 1);
+  assert.equal(preview.messageCount, 1);
+  assert.ok(Buffer.byteLength(group.message, 'utf8') <= Reminders.WECOM_TEXT_LIMIT);
+  assert.match(group.message, /@孙涛/);
+  assert.match(group.message, /你有 40 个 Bug 已超期，最长 8 天未处理！请尽快修复并更新禅道状态！/);
+  assert.doesNotMatch(group.message, /#13000/);
+  assert.doesNotMatch(group.message, /合计：/);
 });
 
 function task(overrides) {
@@ -478,15 +477,11 @@ test('buildReminderPreview 同时汇总 Bug 与任务，并排除别人指派给
   assert.equal(group.bugCount, 1);
   assert.equal(group.taskCount, 1);
   assert.match(group.message, /Bug \/ 任务超期未处理提醒/);
-  assert.match(group.message, /以下 2 项（Bug 1 个、任务 1 个）\s*已超期未处理，请尽快处理。/);
+  assert.match(group.message, /你有 2 项（Bug 1 个、任务 1 个）已超期，最长 6 天未处理！请尽快处理并更新禅道状态！/);
   assert.doesNotMatch(group.message, /提醒阈值/);
-  assert.match(group.message, /\[Bug\] #12021/);
-  assert.match(group.message, /\[任务\] #501/);
-  assert.match(group.message, /项目：新好人好股PC客户端/);
-  assert.match(group.message, /执行：3\.0\.0 迭代/);
-  assert.match(group.message, /截止：2026-10-30/);
-  assert.match(group.message, /模块：自选/);
-  assert.match(group.message, /合计：2 项（Bug 1 个、任务 1 个）/);
+  assert.doesNotMatch(group.message, /\[Bug\] #12021/);
+  assert.doesNotMatch(group.message, /\[任务\] #501/);
+  assert.doesNotMatch(group.message, /合计：/);
   assert.doesNotMatch(group.message, /#507/);
 });
 

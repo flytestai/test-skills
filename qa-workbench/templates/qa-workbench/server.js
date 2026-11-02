@@ -1087,7 +1087,7 @@ function decorateSnapshot(base) {
   const reminderJobs = store.getReminderJobs();
   const reminderJobViews = reminderJobs.map((job) => {
     const preview = reminderPreviewForJob(job);
-    return { job, preview, summary: reminderSummary(preview) };
+    return { job, preview, summary: reminderSummaryForJob(job, preview) };
   });
   const reminderConfig = reminderJobViews.length ? reminderJobViews[0].job : store.getReminders();
   const decorated = {
@@ -1479,8 +1479,18 @@ function reminderSummary(preview) {
     repeatCount: preview.repeatCount || 0,
     firstCount: preview.firstCount || 0,
     groupCount: preview.groupCount || 0,
+    mentionUnmappedCount: preview.mentionUnmappedCount || 0,
     messageCount: preview.messageCount || 0
   };
+}
+
+function reminderSummaryForJob(job, previewValue) {
+  const preview = previewValue || reminderPreviewForJob(job);
+  const summary = reminderSummary(preview);
+  // 当天已经发送过时预览可能为空，但仍要提示任务里尚未配置的企微 userid。
+  const coverage = preview.total > 0 ? preview : reminderPreviewForJob(Object.assign({}, job, { lastSent: {} }));
+  summary.mentionUnmappedCount = coverage.mentionUnmappedCount || 0;
+  return summary;
 }
 
 function reminderResponse(jobId) {
@@ -1490,7 +1500,7 @@ function reminderResponse(jobId) {
     return {
       job,
       preview,
-      summary: reminderSummary(preview)
+      summary: reminderSummaryForJob(job, preview)
     };
   });
   const selected = (jobId

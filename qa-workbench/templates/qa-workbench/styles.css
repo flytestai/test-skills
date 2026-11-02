@@ -10897,6 +10897,11 @@ kbd {
   line-height: 1.6;
 }
 
+.reminder-job-meta-warn {
+  color: #a96b0d;
+  font-weight: 600;
+}
+
 .reminder-job-actions {
   display: flex;
   flex-wrap: wrap;
@@ -11230,6 +11235,43 @@ kbd {
 .reminder-group-title span {
   color: var(--muted);
   font-size: 8.5px;
+}
+
+.reminder-mention-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #a96b0d;
+  font-size: 8.5px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.reminder-mention-warning svg {
+  width: 10px;
+  height: 10px;
+  flex: none;
+}
+
+.reminder-mention-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid #f2dab2;
+  border-radius: 8px;
+  color: #8a5a0a;
+  background: #fff8e8;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.reminder-mention-alert svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 1px;
 }
 
 .reminder-group-head .btn {

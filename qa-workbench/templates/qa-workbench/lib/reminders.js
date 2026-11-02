@@ -7,7 +7,6 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_LOGS = 20;
 const WECOM_TEXT_LIMIT = 2048;
-const MESSAGE_BUDGET = 1820;
 const WEBHOOK_PREFIX = 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=';
 
 const DEFAULT_REMINDER_CONFIG = {
@@ -116,6 +115,8 @@ function maskWebhook(value) {
 }
 
 const ACCOUNT_PATTERN = /^[A-Za-z0-9_.@-]{1,64}$/;
+// 映射键既可以是禅道账号，也可以是开发姓名；姓名允许中文，不能包含空白或分隔符。
+const MENTION_KEY_PATTERN = /^[^\s=:：]{1,64}$/u;
 
 function normalizeMentionMap(value, fallback, strict) {
   if (value === undefined || value === null) {
@@ -129,8 +130,8 @@ function normalizeMentionMap(value, fallback, strict) {
   Object.entries(value).forEach(([rawKey, rawValue]) => {
     const key = String(rawKey || '').trim();
     const mention = String(rawValue || '').trim();
-    if (!ACCOUNT_PATTERN.test(key)) {
-      if (strict) throw badRequest(`企微账号映射中的禅道账号「${key || '空'}」格式无效。`);
+    if (!MENTION_KEY_PATTERN.test(key)) {
+      if (strict) throw badRequest(`企微账号映射中的禅道账号或姓名「${key || '空'}」格式无效。`);
       return;
     }
     if (mention !== '@all' && !ACCOUNT_PATTERN.test(mention)) {
@@ -520,71 +521,61 @@ function selectReminderTasks(tasks, account, thresholdDays, now, moduleNames, fi
     .sort((a, b) => b.days - a.days || String(a.id).localeCompare(String(b.id)));
 }
 
-function buildBugLine(item, index, withKind) {
-  const severity = item.severity ? `[${item.severity}] ` : '';
-  const kind = withKind ? '[Bug] ' : '';
-  const repeat = item.isRepeat && item.daysSinceReminded != null ? `｜距上次提醒：${item.daysSinceReminded} 天` : '';
-  return `${index}. ${kind}#${item.id} ${severity}${item.title}\n`
-    + `   产品：${item.product}｜版本：${item.version}｜模块：${item.module}｜未处理：${item.days} 天${repeat}`;
+function resolveReminderMention(mentionMap, account, name) {
+  const map = mentionMap && typeof mentionMap === 'object' ? mentionMap : {};
+  const wanted = [account, name]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const entry = Object.entries(map).find(([key]) => wanted.includes(String(key || '').trim().toLowerCase()));
+  if (entry) {
+    const mention = String(entry[1] || '').trim();
+    if (mention) return { mention, mapped: true };
+  }
+  return { mention: String(account || '').trim(), mapped: false };
 }
 
-function buildTaskLine(item, index, withKind) {
-  const kind = withKind ? '[任务] ' : '';
-  const due = item.dueDate ? `｜截止：${item.dueDate}` : '';
-  const repeat = item.isRepeat && item.daysSinceReminded != null ? `｜距上次提醒：${item.daysSinceReminded} 天` : '';
-  return `${index}. ${kind}#${item.id} ${item.title}\n`
-    + `   项目：${item.product}｜执行：${item.execution}｜模块：${item.module}${due}｜未处理：${item.days} 天${repeat}`;
-}
-
-function groupScopeText(group) {
-  const parts = [];
-  if (group.bugCount) parts.push(`Bug ${group.bugCount} 个`);
-  if (group.taskCount) parts.push(`任务 ${group.taskCount} 个`);
-  return parts.join('、');
-}
-
-function buildGroupMessages(group, config) {
-  const mixed = group.bugCount > 0 && group.taskCount > 0;
-  const units = (group.items || []).map((item, index) => (
-    item.kind === 'task'
-      ? buildTaskLine(item, index + 1, true)
-      : buildBugLine(item, index + 1, mixed)
-  ));
-  const pages = [];
-  let current = [];
-  let currentBytes = 0;
-  units.forEach((unit) => {
-    const bytes = Buffer.byteLength(unit, 'utf8');
-    if (current.length && currentBytes + bytes > MESSAGE_BUDGET) {
-      pages.push(current);
-      current = [];
-      currentBytes = 0;
-    }
-    current.push(unit);
-    currentBytes += bytes;
+function uniqueShortText(values, maxItems) {
+  const seen = new Set();
+  const list = [];
+  (values || []).forEach((value) => {
+    const text = short(String(value == null ? '' : value).trim(), 60);
+    if (!text || seen.has(text)) return;
+    seen.add(text);
+    list.push(text);
   });
-  if (current.length) pages.push(current);
-  if (!pages.length) pages.push([]);
+  const limit = Math.max(1, Number(maxItems) || 3);
+  return list.length > limit
+    ? `${list.slice(0, limit).join('、')}等 ${list.length} 个`
+    : list.join('、');
+}
 
+function buildGroupMessages(group) {
+  const mixed = group.bugCount > 0 && group.taskCount > 0;
+  const items = Array.isArray(group.items) ? group.items : [];
   let title = 'Bug 超期未处理提醒';
   if (group.taskCount && !group.bugCount) title = '任务超期未处理提醒';
   else if (group.taskCount) title = 'Bug / 任务超期未处理提醒';
-  const scope = groupScopeText(group);
+
+  const products = uniqueShortText(items.map((item) => item.product), 3);
+  const versions = uniqueShortText(items.map((item) => item.version || item.execution), 3);
+  const productLabel = group.taskCount && !group.bugCount ? '项目' : '产品';
+  const versionLabel = group.taskCount && !group.bugCount ? '执行' : '版本';
+  const scope = [
+    products ? `${productLabel}：${products}` : '',
+    versions ? `${versionLabel}：${versions}` : ''
+  ].filter(Boolean).join('  ');
+
   const countText = mixed
-    ? `${group.count} 项（${scope}）`
+    ? `${group.count} 项（Bug ${group.bugCount} 个、任务 ${group.taskCount} 个）`
     : group.taskCount
       ? `${group.count} 个任务`
       : `${group.count} 个 Bug`;
   const actionText = group.taskCount ? '处理' : '修复';
   const countGap = group.taskCount ? '' : ' ';
-  const totalPages = pages.length;
-  return pages.map((page, index) => {
-    const pageText = totalPages > 1 ? `（${index + 1}/${totalPages}）` : '';
-    const header = `【${title}】${pageText}\n`
-      + `@${group.name || group.account} 以下 ${countText}${countGap}已超期未处理，请尽快${actionText}。`;
-    const footer = `\n合计：${countText}，最长未处理 ${group.maxDays} 天。`;
-    return `${header}\n\n${page.join('\n\n')}${footer}`;
-  });
+  const prefix = scope ? `  ${scope}  ` : '  ';
+  return [`【${title}】\n`
+    + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超期，最长 ${group.maxDays} 天未处理！`
+    + `请尽快${actionText}并更新禅道状态！`];
 }
 
 function buildReminderGroups(sources, account, config, now, moduleNames) {
@@ -604,10 +595,13 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
     const accountKey = String(item.assigneeAccount || '').trim();
     if (!accountKey) return;
     if (!map.has(accountKey)) {
+      const rawName = String(item.assignee || accountKey).trim() || accountKey;
+      const mentionInfo = resolveReminderMention(config.mentionMap, accountKey, rawName);
       map.set(accountKey, {
         account: accountKey,
-        name: short(item.assignee || accountKey, 30),
-        mention: String((config.mentionMap || {})[accountKey] || accountKey),
+        name: short(rawName, 30),
+        mention: mentionInfo.mention,
+        mentionMapped: mentionInfo.mapped,
         count: 0,
         bugCount: 0,
         taskCount: 0,
@@ -635,7 +629,7 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
   const groups = Array.from(map.values())
     .sort((a, b) => b.count - a.count || b.maxDays - a.maxDays || a.account.localeCompare(b.account));
   groups.forEach((group) => {
-    group.messages = buildGroupMessages(group, config);
+    group.messages = buildGroupMessages(group);
     group.message = group.messages[0] || '';
   });
   return groups;
@@ -695,6 +689,7 @@ function filterReminderPreview(preview, accounts) {
     repeatCount,
     firstCount: Math.max(0, total - repeatCount),
     groupCount: groups.length,
+    mentionUnmappedCount: groups.filter((group) => !group.mentionMapped).length,
     messageCount
   });
 }
@@ -731,6 +726,7 @@ function buildReminderPreview(options) {
     repeatCount,
     firstCount: Math.max(0, total - repeatCount),
     groupCount: groups.length,
+    mentionUnmappedCount: groups.filter((group) => !group.mentionMapped).length,
     messageCount,
     configured: Boolean(config.webhookUrl),
     options: buildReminderOptions({
