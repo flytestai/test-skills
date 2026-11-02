@@ -2959,7 +2959,7 @@
             <div class="form-field full">
               <label for="reminder-mentions">禅道账号 / 姓名 → 企微 userid</label>
               <textarea id="reminder-mentions" name="mentionMap" rows="4" placeholder="suntao=SunTao&#10;孙涛=SunTao&#10;zhangsan=ZhangSan">${esc(mentionText)}</textarea>
-              <span class="form-hint">每行一个，格式“禅道账号或姓名=企微userid”。企微群机器人只认 userid；未配置时会退回使用禅道账号，企微识别不了就只会显示普通的 @ 文字，不会真正提醒到人。</span>
+              <span class="form-hint">每行一个，格式“禅道账号或姓名=企微userid”。userid 可在企微管理后台「通讯录 → 成员详情 → 账号」查看。企微群机器人只认 userid；未配置时会退回使用禅道账号，企微识别不了就只会显示普通的 @ 文字，不会真正提醒到人。</span>
             </div>
           </div>
           <div class="settings-actions">
