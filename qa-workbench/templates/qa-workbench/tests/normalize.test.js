@@ -110,6 +110,9 @@ test('task status and ownership are mapped from ZenTao', () => {
   assert.equal(row.rawStatus, 'wait');
   assert.equal(row.statusLabel, '待开始');
   assert.equal(row.isMine, true);
+  assert.equal(row.isOpenedByMe, true);
+  assert.equal(row.creatorAccount, 'qa_user');
+  assert.equal(row.creator, '测试员');
   assert.equal(row.isTest, true);
   assert.equal(row.assignee, '测试员');
   assert.equal(row.priority, 'P1');
@@ -124,10 +127,12 @@ test('task status variants and task deadline take precedence', () => {
   assert.equal(task({ status: 'done' }).status, 'done');
   assert.equal(task({ status: 'closed' }).status, 'done');
   assert.equal(task({ status: 'cancel' }).status, 'done');
-  const row = task({ deadline: '2026-10-15', assignedTo: 'dev01' });
+  const row = task({ deadline: '2026-10-15', assignedTo: 'dev01', assignedDate: '2026-10-22 11:00:00' });
   assert.equal(row.dueDate, '2026-10-15');
   assert.equal(row.dueSource, 'task');
   assert.equal(row.isMine, false);
+  assert.equal(row.isOpenedByMe, true);
+  assert.equal(row.assignedAt, toIso('2026-10-22 11:00:00'));
 });
 
 test('bug severity, status, module and ownership are normalized', () => {

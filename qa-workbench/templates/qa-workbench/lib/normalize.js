@@ -232,6 +232,7 @@ function normalizeTask(raw, context) {
   const assignedAt = toIso(task.assignedDate);
   const type = String(task.type || 'misc');
   const assignedAccount = String(task.assignedTo || '');
+  const creatorAccount = String(task.openedBy || '');
   const history = [{ at: openedAt, text: '任务创建于禅道' }];
   if (assignedAt && assignedAt !== openedAt) {
     history.unshift({ at: assignedAt, text: `指派给 ${realName(users, assignedAccount)}` });
@@ -252,6 +253,7 @@ function normalizeTask(raw, context) {
     rawStatus: String(task.status || 'wait'),
     statusLabel: statusMeta.label,
     project: projectName,
+    moduleId: String(task.module && task.module !== '0' ? task.module : ''),
     module: String(task.module && task.module !== '0' ? task.module : ''),
     execution: executionName,
     executionId: String(task.execution || exec.id || ''),
@@ -266,8 +268,12 @@ function normalizeTask(raw, context) {
     bugIds: [],
     assignee: realName(users, assignedAccount),
     assigneeAccount: assignedAccount,
+    creator: realName(users, creatorAccount),
+    creatorAccount,
     isMine: Boolean(account && assignedAccount === account),
+    isOpenedByMe: Boolean(account && creatorAccount === account),
     isTest: type === 'test',
+    assignedAt,
     createdAt: openedAt,
     updatedAt: toIso(task.lastEditedDate || task.finishedDate || task.assignedDate || task.openedDate) || openedAt,
     completedAt: finishedAt,
@@ -364,6 +370,7 @@ function normalizeBug(raw, context) {
     actual: extractSection(steps, '实际结果|实际|结果'),
     taskId: bug.task && String(bug.task) !== '0' ? String(bug.task) : '',
     createdAt: openedAt,
+    assignedAt,
     updatedAt,
     resolvedAt,
     verifiedAt: closedAt,

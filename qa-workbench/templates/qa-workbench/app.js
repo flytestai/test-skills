@@ -3,7 +3,7 @@
 
   const Core = window.QAWorkbenchCore;
   const PREF_KEY = 'qdesk.ui.v2';
-  const VIEWS = ['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings'];
+  const VIEWS = ['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'reminders', 'settings'];
   const STATUS_COLORS = { todo: '#8592a8', doing: '#4f6ef7', blocked: '#f0783c', done: '#1eab7a' };
   const TASK_STATUS_CLASS = { todo: 'status-todo', doing: 'status-doing', blocked: 'status-blocked', done: 'status-done' };
   const BUG_STATUS_CLASS = { new: 'bug-new', confirmed: 'bug-confirmed', fixing: 'bug-fixing', verifying: 'bug-verifying', closed: 'bug-closed', hold: 'bug-hold' };
@@ -192,6 +192,13 @@
     return classifyBugs(visibleBugs());
   }
 
+  function initialReminderConfig(data) {
+    const selectedId = String(data.reminderSelectedJobId || '');
+    const selected = (Array.isArray(data.reminderJobs) ? data.reminderJobs : [])
+      .find((job) => String(job.id) === selectedId);
+    return selected || data.reminders || null;
+  }
+
   function applySnapshot(data) {
     const preferences = data.settings && data.settings.preferences ? data.settings.preferences : {};
     const local = loadUiPrefs();
@@ -217,6 +224,11 @@
       scopeCounts: data.scopeCounts || null,
       reports: Array.isArray(data.reports) ? data.reports : [],
       releasePlans: data.releasePlans && typeof data.releasePlans === 'object' ? data.releasePlans : {},
+      reminders: initialReminderConfig(data),
+      reminderJobs: Array.isArray(data.reminderJobs) ? data.reminderJobs : [],
+      reminderSelectedJobId: data.reminderSelectedJobId || '',
+      reminderPreview: data.reminderPreview || null,
+      reminderLogs: Array.isArray(data.reminderLogs) ? data.reminderLogs : [],
       creation: data.creation || null,
       sync: data.sync || null,
       syncState: data.syncState || null,
@@ -566,6 +578,12 @@
           title: '工作日报',
           subtitle: '自动采集当日禅道任务与 Bug 进展，保存在本地服务。'
         };
+      case 'reminders':
+        return {
+          eyebrow: 'AUTOMATION / REMINDERS',
+          title: '定时任务',
+          subtitle: '按开发汇总我指派后超期未处理的 Bug 与任务，定时在企微群艾特对应开发。'
+        };
       case 'settings':
         return {
           eyebrow: 'SYSTEM / SETTINGS',
@@ -602,6 +620,10 @@
     if (navReleaseCount) {
       navReleaseCount.textContent = String(releaseItems().filter((item) => item.status === 'testing' || item.status === 'upcoming').length);
     }
+    const reminderCount = $('#nav-reminder-count');
+    if (reminderCount) {
+      reminderCount.textContent = String((state.reminderPreview && state.reminderPreview.total) || 0);
+    }
     $('#sidebar-name').textContent = state.profile.name;
     $('#sidebar-role').textContent = state.profile.role;
     $('#sidebar-sprint').textContent = state.profile.sprint || 'PC客户端';
@@ -625,6 +647,7 @@
       tasks: renderTasks,
       bugs: renderBugs,
       reports: renderReports,
+      reminders: renderReminders,
       settings: renderSettings
     };
     const html = (renderers[ui.view] || renderDashboard)();
@@ -2594,6 +2617,795 @@
   }
 
   /* =========================================================
+     Scheduled reminders
+     ========================================================= */
+
+  const REMINDER_WEEKDAYS = [
+    { value: 1, label: '周一' },
+    { value: 2, label: '周二' },
+    { value: 3, label: '周三' },
+    { value: 4, label: '周四' },
+    { value: 5, label: '周五' },
+    { value: 6, label: '周六' },
+    { value: 0, label: '周日' }
+  ];
+
+  function reminderConfig() {
+    return state.reminders || {
+      enabled: false,
+      configured: false,
+      webhookMasked: '',
+      thresholdDays: 3,
+      repeatDays: 3,
+      scheduleTime: '09:30',
+      weekdays: [1, 2, 3, 4, 5],
+      mentionMap: {},
+      productIds: [],
+      versions: [],
+      lastRunAt: '',
+      lastRunResult: null
+    };
+  }
+
+  function reminderPreview() {
+    return state.reminderPreview || {
+      total: 0,
+      bugTotal: 0,
+      taskTotal: 0,
+      groupCount: 0,
+      messageCount: 0,
+      thresholdDays: 3,
+      repeatDays: 3,
+      repeatCount: 0,
+      firstCount: 0,
+      productIds: [],
+      versions: [],
+      options: { products: [], versions: [] },
+      groups: [],
+      generatedAt: '',
+      configured: false
+    };
+  }
+
+  function reminderWeekdaysText(days) {
+    return (days || [])
+      .map((day) => {
+        const item = REMINDER_WEEKDAYS.find((entry) => entry.value === Number(day));
+        return item ? item.label : '';
+      })
+      .filter(Boolean)
+      .join('、') || '未选择';
+  }
+
+  function reminderGroupCountText(group) {
+    const parts = [];
+    if (group.bugCount) parts.push(`${group.bugCount} 个 Bug`);
+    if (group.taskCount) parts.push(`${group.taskCount} 个任务`);
+    const repeat = Number(group.repeatCount) > 0 ? ` · 重复提醒 ${group.repeatCount} 项` : '';
+    return parts.length
+      ? `共 ${group.count} 项（${parts.join(' · ')}） · 最长 ${group.maxDays} 天${repeat}`
+      : `共 ${group.count} 项 · 最长 ${group.maxDays} 天${repeat}`;
+  }
+
+  function reminderItemMeta(item) {
+    const base = item.kind === 'task'
+      ? `${item.product || '未分类项目'} · 执行 ${item.execution || '未指定'} · 模块 ${item.module || '未指定'}${item.dueDate ? ` · 截止 ${item.dueDate}` : ''}`
+      : `${item.product || '未填写产品'} · 版本 ${item.version || '未填写'} · 模块 ${item.module || '未指定'}`;
+    const repeat = item.isRepeat && item.daysSinceReminded != null
+      ? ` · 上次提醒 ${item.daysSinceReminded} 天前`
+      : ' · 首次提醒';
+    return `${base}${repeat}`;
+  }
+
+  function renderReminderGroup(group, index) {
+    const items = group.items || group.bugs || [];
+    return `<article class="reminder-group">
+      <header class="reminder-group-head">
+        <label class="reminder-group-check" title="选择该开发">
+          <input type="checkbox" data-reminder-group="${index}" value="${esc(group.account)}" aria-label="选择 ${esc(group.name || group.account)}" checked>
+        </label>
+        <span class="reminder-avatar">${esc(avatarInitial(group.name || group.account))}</span>
+        <div class="reminder-group-title">
+          <strong>${esc(group.name || group.account)}</strong>
+          <span>@${esc(group.mention || group.account)} · ${reminderGroupCountText(group)}</span>
+        </div>
+        <button class="btn btn-sm" type="button" data-action="reminder-copy" data-index="${index}">${icon('copy')}复制消息</button>
+      </header>
+      <div class="reminder-bug-list">
+        ${items.map((item) => `<div class="reminder-bug-row">
+          <span class="reminder-days">${item.days} 天</span>
+          <div>
+            <strong><span class="reminder-kind ${item.kind === 'task' ? 'is-task' : ''}">${item.kind === 'task' ? '任务' : 'Bug'}</span>${item.isRepeat ? '<span class="reminder-repeat-tag">重复</span>' : ''}#${esc(item.id)} ${esc(item.title)}</strong>
+            <span>${esc(reminderItemMeta(item))}</span>
+          </div>
+        </div>`).join('')}
+      </div>
+      <details class="reminder-message-detail">
+        <summary>查看企微消息${(group.messages || []).length > 1 ? `（共 ${group.messages.length} 条）` : ''}</summary>
+        <pre>${esc(group.message || '')}</pre>
+      </details>
+    </article>`;
+  }
+
+  function renderReminderLogs(logs) {
+    if (!logs.length) {
+      return `<div class="reminder-empty">${icon('inbox')}<span>还没有发送记录。保存任务后，到计划时间会自动发送；也可以手动立即发送。</span></div>`;
+    }
+    return `<div class="reminder-log-list">${logs.map((log) => `<div class="reminder-log-row">
+      <span class="reminder-log-time">${esc(fmtDateTime(log.at))}</span>
+      <span class="reminder-log-tag ${log.trigger === 'auto' ? 'is-auto' : ''}">${log.trigger === 'auto' ? '定时' : '手动'}</span>
+      <span class="reminder-log-state ${log.ok ? 'is-ok' : 'is-fail'}">${log.ok ? '成功' : '失败'}</span>
+      <span>${log.jobName ? `【${esc(log.jobName)}】` : ''}${log.total} 个超期项 · ${log.sent} 条已发送${log.failed ? ` · ${log.failed} 条失败` : ''}</span>
+      <span class="reminder-log-error">${esc(log.error || '')}</span>
+    </div>`).join('')}</div>`;
+  }
+
+  function reminderOptionList(name, values, options, emptyText) {
+    const selected = new Set((values || []).map(String));
+    const list = (options || []).slice();
+    (values || []).map(String).forEach((value) => {
+      if (!list.some((option) => String(option.id != null ? option.id : option.name) === value)) {
+        list.push({ id: value, name: value, count: 0, missing: true });
+      }
+    });
+    if (!list.length) return `<span class="form-hint">${esc(emptyText)}</span>`;
+    return `<div class="reminder-option-list">
+      ${list.map((option) => {
+        const value = String(option.id != null ? option.id : option.name);
+        return `<label><input type="checkbox" name="${esc(name)}" value="${esc(value)}" ${selected.has(value) ? 'checked' : ''}><span>${esc(option.name || value)}${option.count ? ` <em>${option.count} 个</em>` : ''}${option.missing ? ' <em>已选</em>' : ''}</span></label>`;
+      }).join('')}
+    </div>`;
+  }
+
+  function reminderFilterText(preview) {
+    const products = preview.productIds || [];
+    const versions = preview.versions || [];
+    if (!products.length && !versions.length) return '当前提醒全部产品、全部版本';
+    const productNames = products.map((id) => {
+      const item = ((preview.options || {}).products || []).find((product) => String(product.id) === String(id));
+      return item ? item.name : `产品 ${id}`;
+    });
+    const parts = [];
+    if (productNames.length) parts.push(`产品：${productNames.join('、')}`);
+    if (versions.length) parts.push(`版本：${versions.join('、')}`);
+    return `当前提醒 ${parts.join('；')}`;
+  }
+
+  function renderReminderPreviewPanel(preview, cfg) {
+    const groups = preview.groups || [];
+    return `<section class="settings-panel reminder-preview-panel">
+      <div class="settings-panel-head">
+        <span class="settings-icon tint-red">${icon('message')}</span>
+        <div><h2>发送预览</h2><p>${preview.generatedAt ? `更新于 ${esc(fmtDateTime(preview.generatedAt))}` : '选择筛选条件后自动刷新'} · 首次阈值 ${preview.thresholdDays || cfg.thresholdDays} 天 · 重复间隔 ${Number(preview.repeatDays || cfg.repeatDays) > 0 ? `${Number(preview.repeatDays || cfg.repeatDays)} 天` : '仅一次'} · 共 ${preview.messageCount || 0} 条企微消息</p></div>
+      </div>
+      <div class="reminder-preview-summary">
+        <div><strong>${preview.total || 0}</strong><span>超期项（Bug ${preview.bugTotal || 0} · 任务 ${preview.taskTotal || 0}）</span></div>
+        <div><strong>${preview.repeatCount || 0}</strong><span>重复提醒（首次 ${preview.firstCount || 0}）</span></div>
+        <div><strong>${preview.groupCount || 0}</strong><span>涉及开发</span></div>
+        <div><strong>${preview.messageCount || 0}</strong><span>企微消息</span></div>
+      </div>
+      <div class="reminder-preview-toolbar">
+        <span>${icon('filter')}${esc(reminderFilterText(preview))}</span>
+        <div class="reminder-preview-actions">
+          <button class="btn btn-sm" type="button" data-action="reminder-select-all">全选开发</button>
+          <button class="btn btn-sm" type="button" data-action="reminder-select-none">清空</button>
+          <button class="btn btn-sm btn-primary" type="button" data-action="reminder-run-selected">${icon('message')}批量发送选中</button>
+        </div>
+      </div>
+      <div class="reminder-groups">
+        ${groups.length ? groups.map(renderReminderGroup).join('') : `<div class="reminder-empty">${icon('check-circle')}<span>当前没有达到阈值的超期 Bug 或任务。同步禅道后，由我指派给开发且长期未处理的 Bug / 任务会出现在这里。</span></div>`}
+      </div>
+    </section>`;
+  }
+
+  function reminderJobList() {
+    return Array.isArray(state.reminderJobs) ? state.reminderJobs : [];
+  }
+
+  function selectedReminderJob() {
+    const id = String(state.reminderSelectedJobId || '');
+    return id ? reminderJobList().find((job) => String(job.id) === id) || null : null;
+  }
+
+  function reminderProductName(id) {
+    const product = (state.products || []).find((item) => String(item.id) === String(id));
+    return product ? product.name : `产品 ${id}`;
+  }
+
+  function reminderJobScopeText(job) {
+    const products = (job.productIds || []).map(reminderProductName);
+    const versions = job.versions || [];
+    return `产品：${products.length ? products.join('、') : '全部'} · 版本：${versions.length ? versions.join('、') : '全部'}`;
+  }
+
+  function reminderJobScheduleText(job) {
+    return job.enabled ? `${reminderWeekdaysText(job.weekdays)} ${job.scheduleTime}` : '未启用';
+  }
+
+  function renderReminderJobRow(job, selectedId) {
+    const summary = job.summary || {};
+    const active = String(job.id) === String(selectedId);
+    return `<article class="reminder-job-row ${active ? 'is-selected' : ''}">
+      <div class="reminder-job-main">
+        <div class="reminder-job-title">
+          <span class="reminder-job-status ${job.enabled ? 'is-on' : ''}">${job.enabled ? '启用' : '停用'}</span>
+          <strong>${esc(job.name || '未命名提醒')}</strong>
+          ${active ? '<em class="reminder-job-current">当前编辑</em>' : ''}
+          ${job.configured ? '' : '<em class="reminder-job-warn">Webhook 未配置</em>'}
+        </div>
+        <div class="reminder-job-meta">
+          <span>${esc(reminderJobScopeText(job))}</span>
+          <span>阈值 ${job.thresholdDays} 天 · 重复 ${Number(job.repeatDays) > 0 ? `${job.repeatDays} 天` : '仅一次'}</span>
+          <span>${esc(reminderJobScheduleText(job))}</span>
+          <span>${summary.total || 0} 个超期项 · ${summary.groupCount || 0} 位开发 · ${summary.messageCount || 0} 条消息</span>
+          ${job.lastRunAt ? `<span>上次发送：${esc(fmtDateTime(job.lastRunAt))}</span>` : ''}
+        </div>
+      </div>
+      <div class="reminder-job-actions">
+        <button class="btn btn-sm" type="button" data-action="reminder-select" data-id="${esc(job.id)}">编辑</button>
+        <button class="btn btn-sm" type="button" data-action="reminder-toggle" data-id="${esc(job.id)}">${job.enabled ? '停用' : '启用'}</button>
+        <button class="btn btn-sm" type="button" data-action="reminder-copy-job" data-id="${esc(job.id)}">复制</button>
+        <button class="btn btn-sm" type="button" data-action="reminder-run-job" data-id="${esc(job.id)}">${icon('message')}立即发送</button>
+        <button class="btn btn-sm" type="button" data-action="reminder-delete-job" data-id="${esc(job.id)}">删除</button>
+      </div>
+    </article>`;
+  }
+
+  function renderReminderJobsPanel() {
+    const jobs = reminderJobList();
+    return `<section class="settings-panel wide reminder-jobs-panel">
+      <div class="settings-panel-head">
+        <span class="settings-icon tint-amber">${icon('clock')}</span>
+        <div><h2>定时任务列表</h2><p>共 ${jobs.length} 个任务，每个任务可以独立设置产品、版本、超期阈值、重复间隔和提醒时间。</p></div>
+        <button class="btn btn-primary btn-sm" type="button" data-action="reminder-new">${icon('plus')}新建任务</button>
+      </div>
+      ${jobs.length
+        ? `<div class="reminder-job-list">${jobs.map((job) => renderReminderJobRow(job, state.reminderSelectedJobId)).join('')}</div>`
+        : `<div class="reminder-empty">${icon('inbox')}<span>还没有保存的定时任务。点击「新建任务」配置第一个提醒，保存后会显示在这里。</span></div>`}
+    </section>`;
+  }
+
+  function renderReminders() {
+    const cfg = reminderConfig();
+    const preview = reminderPreview();
+    const logs = state.reminderLogs || [];
+    const editingJob = selectedReminderJob();
+    const editing = Boolean(editingJob);
+    const mentionText = Object.entries(cfg.mentionMap || {})
+      .map(([account, mention]) => `${account}=${mention}`)
+      .join('\n');
+    const nextText = cfg.enabled
+      ? `${reminderWeekdaysText(cfg.weekdays)} ${cfg.scheduleTime}`
+      : '未启用';
+    const options = preview.options || { products: [], versions: [] };
+    return `<div class="reminder-layout">
+      ${renderReminderJobsPanel()}
+
+      <section class="settings-panel reminder-config-panel">
+        <div class="settings-panel-head">
+          <span class="settings-icon tint-amber">${icon('clock')}</span>
+          <div><h2>${editing ? `编辑任务：${esc(editingJob.name)}` : '新建定时任务'}</h2><p>每天检查当前账号提交并指派给其他开发的激活 Bug 和未完成任务，可按产品、版本筛选，按开发分组发送企微群提醒并艾特对应开发，也支持手动批量发送给选中的开发。</p></div>
+        </div>
+        <div class="reminder-status-strip">
+          <span class="${cfg.enabled ? 'is-on' : ''}">${icon('activity')}${cfg.enabled ? '已启用' : '未启用'}</span>
+          <span class="${cfg.configured ? 'is-on' : 'is-warn'}">${icon('link')}${cfg.configured ? 'Webhook 已配置' : 'Webhook 未配置'}</span>
+          <span>${icon('clock')}${esc(nextText)}</span>
+          <span>${icon('bug')}当前 ${preview.total} 个超期项</span>
+          <span>${icon('refresh')}${Number(cfg.repeatDays) > 0 ? `每 ${Number(cfg.repeatDays)} 天重复提醒` : '仅提醒一次'}</span>
+        </div>
+        <form class="reminder-form" data-form="reminders">
+          <div class="form-grid">
+            <div class="form-field full">
+              <label for="reminder-name">任务名称</label>
+              <input id="reminder-name" name="name" type="text" maxlength="60" value="${esc(cfg.name || '')}" placeholder="如：3.0.0 版本超期 3 天提醒">
+              <span class="form-hint">用于在定时任务列表中区分不同参数组合。</span>
+            </div>
+            <div class="form-field full">
+              <label class="reminder-switch">
+                <input type="checkbox" name="enabled" ${cfg.enabled ? 'checked' : ''}>
+                <span class="reminder-switch-track" aria-hidden="true"></span>
+                <span>启用定时提醒</span>
+              </label>
+              <span class="form-hint">关闭后不会自动发送，手动“立即发送”仍然可用。</span>
+            </div>
+            <div class="form-field full">
+              <label for="reminder-webhook">企业微信群机器人 Webhook</label>
+              <input id="reminder-webhook" name="webhookUrl" type="url" autocomplete="off" placeholder="${cfg.configured ? '已配置，留空保持不变' : 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...'}">
+              ${cfg.configured ? `<div class="reminder-webhook-saved"><code>${esc(cfg.webhookMasked)}</code><button class="btn btn-sm" type="button" data-action="reminder-clear-webhook">清除</button></div>` : '<span class="form-hint">在企微群聊 → 群机器人 → 添加机器人后复制 Webhook 地址。</span>'}
+            </div>
+            <div class="form-field">
+              <label for="reminder-days">超期阈值（天）</label>
+              <input id="reminder-days" name="thresholdDays" type="number" min="1" max="90" value="${Number(cfg.thresholdDays) || 3}">
+              <span class="form-hint">Bug 或任务指派给开发后达到该天数仍未处理即首次提醒。</span>
+            </div>
+            <div class="form-field">
+              <label for="reminder-repeat-days">重复提醒间隔（天）</label>
+              <input id="reminder-repeat-days" name="repeatDays" type="number" min="0" max="90" value="${Number(cfg.repeatDays) || 0}">
+              <span class="form-hint">首次提醒后，仍未处理的项每隔该天数再次提醒；填 0 表示只提醒一次。</span>
+            </div>
+            <div class="form-field">
+              <label for="reminder-time">提醒时间</label>
+              <input id="reminder-time" name="scheduleTime" type="time" value="${esc(cfg.scheduleTime || '09:30')}">
+              <span class="form-hint">服务在计划时间后启动时，当天补发一次。</span>
+            </div>
+            <div class="form-field full">
+              <label>提醒日期</label>
+              <div class="reminder-weekdays">
+                ${REMINDER_WEEKDAYS.map((day) => `<label><input type="checkbox" name="weekdays" value="${day.value}" ${(cfg.weekdays || []).includes(day.value) ? 'checked' : ''}><span>${day.label}</span></label>`).join('')}
+              </div>
+            </div>
+            <div class="form-field full">
+              <label>产品范围</label>
+              ${reminderOptionList('productIds', cfg.productIds, options.products, '暂无产品数据，请先同步禅道。')}
+              <span class="form-hint">不选表示全部产品；同时选择产品和版本时取交集。</span>
+            </div>
+            <div class="form-field full">
+              <label>版本范围</label>
+              ${reminderOptionList('versions', cfg.versions, options.versions, '暂无版本数据，请先同步禅道。')}
+              <span class="form-hint">不选表示全部版本；勾选产品或版本后，本次提醒只包含匹配的 Bug，任务暂不参与。</span>
+            </div>
+            <div class="form-field full">
+              <label for="reminder-mentions">禅道账号 → 企微 userid</label>
+              <textarea id="reminder-mentions" name="mentionMap" rows="4" placeholder="suntao=SunTao&#10;zhangsan=ZhangSan">${esc(mentionText)}</textarea>
+              <span class="form-hint">每行一个，格式“禅道账号=企微userid”。未填写的账号直接使用禅道账号；企微机器人只能艾特 userid，账号不一致时需要在这里映射。</span>
+            </div>
+          </div>
+          <div class="settings-actions">
+            <button class="btn btn-primary" type="submit">${icon('check')}${editing ? '保存修改' : '保存任务'}</button>
+            <button class="btn" type="button" data-action="reminder-run">${icon('message')}立即发送</button>
+            <button class="btn" type="button" data-action="reminder-refresh">${icon('refresh')}刷新预览</button>
+            ${editing ? `<button class="btn" type="button" data-action="reminder-delete-current">删除此任务</button>` : ''}
+          </div>
+          <div class="data-note">${icon('shield')}<span>每个任务独立保存 Webhook、产品 / 版本、阈值和计划；Webhook 只保存在本机 data/app-data.json，接口仅回传掩码。提醒范围仅限当前账号提交并指派给其他开发的激活 Bug 与未完成任务，别人指派给开发的 Bug / 任务不会进入提醒。产品 / 版本筛选只作用于 Bug，选择后任务不参与；提醒不会修改禅道数据。</span></div>
+        </form>
+      </section>
+
+      ${renderReminderPreviewPanel(preview, cfg)}
+
+      <section class="settings-panel wide reminder-log-panel">
+        <div class="settings-panel-head">
+          <span class="settings-icon tint-slate">${icon('activity')}</span>
+          <div><h2>发送记录</h2><p>最近 ${logs.length} 次任务结果，保存在本机。${cfg.lastRunAt ? `上次执行：${esc(fmtDateTime(cfg.lastRunAt))}` : '尚未执行。'}</p></div>
+        </div>
+        ${renderReminderLogs(logs)}
+      </section>
+    </div>`;
+  }
+
+  function readReminderForm(form) {
+    const data = new FormData(form);
+    const mentionMap = {};
+    String(data.get('mentionMap') || '')
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => {
+        const match = line.match(/^([^=:：]+)[=:：](.+)$/);
+        if (match) mentionMap[match[1].trim()] = match[2].trim();
+      });
+    return {
+      name: String(data.get('name') || '').trim(),
+      enabled: Boolean(form.elements.enabled && form.elements.enabled.checked),
+      webhookUrl: String(data.get('webhookUrl') || '').trim(),
+      thresholdDays: Number(data.get('thresholdDays')),
+      repeatDays: Number(data.get('repeatDays')),
+      scheduleTime: String(data.get('scheduleTime') || '').trim(),
+      weekdays: data.getAll('weekdays').map((value) => Number(value)),
+      mentionMap,
+      productIds: data.getAll('productIds').map((value) => String(value)).filter(Boolean),
+      versions: data.getAll('versions').map((value) => String(value)).filter(Boolean)
+    };
+  }
+
+  function applyReminderData(data) {
+    if (!data) return;
+    if (Array.isArray(data.jobs)) state.reminderJobs = data.jobs;
+    if (data.selectedJobId !== undefined) state.reminderSelectedJobId = data.selectedJobId;
+    if (data.selectedJob) state.reminders = data.selectedJob;
+    else if (data.reminders) state.reminders = data.reminders;
+    if (data.preview) state.reminderPreview = data.preview;
+    if (data.logs) state.reminderLogs = data.logs;
+  }
+
+  function reminderSavePayload(body) {
+    const payload = Object.assign({}, body);
+    const id = String(state.reminderSelectedJobId || '');
+    if (id) payload.id = id;
+    else payload.create = true;
+    return payload;
+  }
+
+  function reminderFormIssue(body) {
+    if (!body.name) return '请填写任务名称。';
+    if (body.enabled && !body.webhookUrl && !(state.reminders && state.reminders.configured)) {
+      return '请先填写企业微信群机器人 Webhook。';
+    }
+    if (!body.weekdays.length) return '请至少选择一个提醒日期。';
+    if (!Number.isInteger(body.thresholdDays) || body.thresholdDays < 1 || body.thresholdDays > 90) {
+      return '超期阈值必须是 1–90 之间的整数。';
+    }
+    if (!Number.isInteger(body.repeatDays) || body.repeatDays < 0 || body.repeatDays > 90) {
+      return '重复提醒间隔必须是 0–90 之间的整数。';
+    }
+    return '';
+  }
+
+  async function persistReminderForm() {
+    const form = document.querySelector('form[data-form="reminders"]');
+    if (!form) return '';
+    const body = readReminderForm(form);
+    const issue = reminderFormIssue(body);
+    if (issue) {
+      showToast(issue, 'warn');
+      return '';
+    }
+    try {
+      const data = await apiRequest('/api/reminders', { method: 'POST', body: reminderSavePayload(body) });
+      applyReminderData(data);
+      return String(data.selectedJobId || '');
+    } catch (error) {
+      showToast(`保存定时提醒失败：${error.message}`, 'error');
+      return '';
+    }
+  }
+
+  async function saveReminders(form) {
+    const body = readReminderForm(form);
+    const issue = reminderFormIssue(body);
+    if (issue) {
+      showToast(issue, 'warn');
+      return;
+    }
+    const wasEditing = Boolean(state.reminderSelectedJobId);
+    try {
+      const data = await apiRequest('/api/reminders', { method: 'POST', body: reminderSavePayload(body) });
+      applyReminderData(data);
+      showToast(wasEditing ? '定时任务已保存。' : '定时任务已创建。');
+      renderView(false);
+    } catch (error) {
+      showToast(`保存定时提醒失败：${error.message}`, 'error');
+    }
+  }
+
+  let reminderPreviewTimer = null;
+  let reminderPreviewSeq = 0;
+
+  function reminderDraftPreviewBody(form) {
+    const body = readReminderForm(form);
+    return {
+      jobId: String(state.reminderSelectedJobId || ''),
+      thresholdDays: body.thresholdDays,
+      repeatDays: body.repeatDays,
+      productIds: body.productIds,
+      versions: body.versions
+    };
+  }
+
+  async function refreshReminderPreviewFromForm(showMessage) {
+    const form = document.querySelector('form[data-form="reminders"]');
+    if (!form || ui.view !== 'reminders') return false;
+    const body = reminderDraftPreviewBody(form);
+    if (!Number.isInteger(body.thresholdDays) || body.thresholdDays < 1 || body.thresholdDays > 90) return false;
+    if (!Number.isInteger(body.repeatDays) || body.repeatDays < 0 || body.repeatDays > 90) return false;
+    const seq = ++reminderPreviewSeq;
+    try {
+      const data = await apiRequest('/api/reminders/preview', { method: 'POST', body });
+      // 只接受最后一次请求的结果，避免快速勾选时旧响应覆盖新筛选。
+      if (seq !== reminderPreviewSeq) return false;
+      if (data && data.preview) state.reminderPreview = data.preview;
+      // 同步一份未保存的草稿到内存，保证重新渲染时勾选框和预览筛选一致；
+      // 只有点击“保存任务”才会写入服务端配置。
+      state.reminders = Object.assign({}, reminderConfig(), {
+        thresholdDays: body.thresholdDays,
+        repeatDays: body.repeatDays,
+        productIds: body.productIds.slice(),
+        versions: body.versions.slice()
+      });
+      const section = document.querySelector('.reminder-preview-panel');
+      if (section) section.outerHTML = renderReminderPreviewPanel(reminderPreview(), reminderConfig());
+      const reminderCount = document.querySelector('#nav-reminder-count');
+      if (reminderCount) reminderCount.textContent = String((state.reminderPreview && state.reminderPreview.total) || 0);
+      if (showMessage) showToast('发送预览已按当前筛选刷新。');
+      return true;
+    } catch (error) {
+      if (seq === reminderPreviewSeq) showToast(`刷新提醒预览失败：${error.message}`, 'error');
+      return false;
+    }
+  }
+
+  function queueReminderPreviewRefresh() {
+    if (reminderPreviewTimer) clearTimeout(reminderPreviewTimer);
+    reminderPreviewTimer = setTimeout(() => {
+      reminderPreviewTimer = null;
+      refreshReminderPreviewFromForm(false);
+    }, 250);
+  }
+
+  async function refreshReminders(showMessage) {
+    if (ui.view === 'reminders' && document.querySelector('form[data-form="reminders"]')) {
+      const ok = await refreshReminderPreviewFromForm(false);
+      if (showMessage && ok) showToast('发送预览已按当前筛选刷新。');
+      return;
+    }
+    try {
+      const jobId = String(state.reminderSelectedJobId || '');
+      const data = await apiRequest(`/api/reminders${jobId ? `?jobId=${encodeURIComponent(jobId)}` : ''}`);
+      applyReminderData(data);
+      if (showMessage) showToast('提醒预览已刷新。');
+      if (ui.view === 'reminders') renderView(false);
+    } catch (error) {
+      showToast(`刷新提醒失败：${error.message}`, 'error');
+    }
+  }
+
+  function reminderDefaultDraft() {
+    return {
+      name: `提醒任务 ${reminderJobList().length + 1}`,
+      enabled: false,
+      configured: false,
+      webhookMasked: '',
+      thresholdDays: 3,
+      repeatDays: 3,
+      scheduleTime: '09:30',
+      weekdays: [1, 2, 3, 4, 5],
+      mentionMap: {},
+      productIds: [],
+      versions: [],
+      lastRunAt: '',
+      lastRunResult: null
+    };
+  }
+
+  async function selectReminderJob(jobId) {
+    try {
+      const data = await apiRequest(`/api/reminders?jobId=${encodeURIComponent(jobId)}`);
+      applyReminderData(data);
+      renderView(false);
+    } catch (error) {
+      showToast(`读取定时任务失败：${error.message}`, 'error');
+    }
+  }
+
+  function beginNewReminderJob() {
+    state.reminderSelectedJobId = '';
+    state.reminders = reminderDefaultDraft();
+    renderView(false);
+    refreshReminderPreviewFromForm(false);
+    showToast('已打开新建任务表单，保存后会出现在任务列表。', 'info');
+  }
+
+  async function toggleReminderJob(jobId) {
+    const job = reminderJobList().find((item) => String(item.id) === String(jobId));
+    if (!job) return;
+    if (!job.enabled && !job.configured) {
+      showToast('该任务还没有配置企微 Webhook，请先编辑任务填写 Webhook 后再启用。', 'warn');
+      return;
+    }
+    const currentId = String(state.reminderSelectedJobId || '');
+    try {
+      const data = await apiRequest('/api/reminders', {
+        method: 'POST',
+        body: { id: job.id, enabled: !job.enabled }
+      });
+      if (currentId && currentId !== job.id) {
+        await selectReminderJob(currentId);
+      } else {
+        applyReminderData(data);
+        renderView(false);
+      }
+      showToast(`${job.name} 已${job.enabled ? '停用' : '启用'}。`);
+    } catch (error) {
+      showToast(`更新任务状态失败：${error.message}`, 'error');
+    }
+  }
+
+  async function copyReminderJob(jobId) {
+    const job = reminderJobList().find((item) => String(item.id) === String(jobId));
+    if (!job) return;
+    try {
+      const data = await apiRequest('/api/reminders', {
+        method: 'POST',
+        body: { create: true, copyFromId: job.id, name: `${job.name} 副本` }
+      });
+      applyReminderData(data);
+      renderView(false);
+      showToast('已复制为一个新的定时任务。');
+    } catch (error) {
+      showToast(`复制定时任务失败：${error.message}`, 'error');
+    }
+  }
+
+  async function runReminderJob(jobId) {
+    const job = reminderJobList().find((item) => String(item.id) === String(jobId));
+    if (!job) return;
+    if (!job.configured) {
+      showToast('该任务还没有配置企微 Webhook。', 'warn');
+      return;
+    }
+    const summary = job.summary || {};
+    const confirmed = await confirmDialog({
+      title: `立即发送：${job.name}`,
+      subtitle: '这会使用该任务已保存的配置发送真实消息。',
+      message: `将向 ${summary.groupCount || 0} 位开发发送 ${summary.messageCount || 0} 条企微消息，涉及 ${summary.total || 0} 个超期项。是否继续？`,
+      confirmText: '立即发送'
+    });
+    if (!confirmed) return;
+    try {
+      const data = await apiRequest('/api/reminders/run', {
+        method: 'POST',
+        body: { jobId: job.id },
+        timeoutMs: 90000
+      });
+      applyReminderData(data);
+      const result = data.result || {};
+      if (result.skipped) showToast('该任务当前没有需要提醒的超期项。', 'info');
+      else if (result.failed) showToast(`发送完成：成功 ${result.sent} 条，失败 ${result.failed} 条。`, 'warn');
+      else showToast(`提醒已发送：${result.sent} 条企微消息，覆盖 ${result.total} 个超期项。`);
+      renderView(false);
+    } catch (error) {
+      showToast(`发送提醒失败：${error.message}`, 'error');
+    }
+  }
+
+  async function deleteReminderJob(jobId) {
+    const job = reminderJobList().find((item) => String(item.id) === String(jobId));
+    if (!job) return;
+    const confirmed = await confirmDialog({
+      title: '删除定时任务',
+      subtitle: '删除后该任务的配置、提醒时间和计划都会移除。',
+      message: `确定删除「${job.name}」吗？此操作不会影响禅道数据。`,
+      confirmText: '删除',
+      danger: true
+    });
+    if (!confirmed) return;
+    try {
+      const data = await apiRequest(`/api/reminders/jobs/${encodeURIComponent(job.id)}`, { method: 'DELETE' });
+      applyReminderData(data);
+      if (!data.selectedJobId) {
+        state.reminders = reminderDefaultDraft();
+        state.reminderPreview = data.preview || reminderPreview();
+      }
+      renderView(false);
+      showToast('定时任务已删除。');
+    } catch (error) {
+      showToast(`删除定时任务失败：${error.message}`, 'error');
+    }
+  }
+
+  async function sendRemindersNow() {
+    if (!guardReady()) return;
+    const jobId = await persistReminderForm();
+    if (!jobId) return;
+    const preview = reminderPreview();
+    if (!preview.total) {
+      showToast('当前没有需要提醒的超期 Bug 或任务。', 'info');
+      return;
+    }
+    if (!reminderConfig().configured) {
+      showToast('请先配置企业微信群机器人 Webhook。', 'warn');
+      return;
+    }
+    const confirmed = await confirmDialog({
+      title: '立即发送企微提醒',
+      subtitle: '这会向企微群发送真实消息。',
+      message: `将向 ${preview.groupCount} 位开发发送 ${preview.messageCount} 条企微消息，涉及 ${preview.total} 个超期项（Bug ${preview.bugTotal || 0} 个、任务 ${preview.taskTotal || 0} 个），其中重复提醒 ${preview.repeatCount || 0} 项。是否继续？`,
+      confirmText: '立即发送'
+    });
+    if (!confirmed) return;
+    try {
+      const data = await apiRequest('/api/reminders/run', { method: 'POST', body: { jobId }, timeoutMs: 90000 });
+      applyReminderData(data);
+      const result = data.result || {};
+      if (result.skipped) showToast('当前没有需要提醒的超期 Bug 或任务。', 'info');
+      else if (result.failed) showToast(`提醒发送完成：成功 ${result.sent} 条，失败 ${result.failed} 条。`, 'warn');
+      else showToast(`提醒已发送：${result.sent} 条企微消息，覆盖 ${result.total} 个超期项。`);
+      renderView(false);
+    } catch (error) {
+      showToast(`发送提醒失败：${error.message}`, 'error');
+    }
+  }
+
+  function selectedReminderAccounts() {
+    return Array.from(document.querySelectorAll('[data-reminder-group]:checked'))
+      .map((input) => String(input.value || '').trim())
+      .filter(Boolean);
+  }
+
+  function setReminderGroupSelection(checked) {
+    document.querySelectorAll('[data-reminder-group]').forEach((input) => {
+      input.checked = checked;
+    });
+  }
+
+  async function sendRemindersSelected() {
+    if (!guardReady()) return;
+    const accounts = selectedReminderAccounts();
+    if (!accounts.length) {
+      showToast('请先勾选要发送的开发。', 'warn');
+      return;
+    }
+    const jobId = await persistReminderForm();
+    if (!jobId) return;
+    const preview = reminderPreview();
+    if (!preview.total) {
+      showToast('当前没有需要提醒的超期 Bug 或任务。', 'info');
+      return;
+    }
+    if (!reminderConfig().configured) {
+      showToast('请先配置企业微信群机器人 Webhook。', 'warn');
+      return;
+    }
+    const groups = (preview.groups || []).filter((group) => accounts.includes(String(group.account)));
+    if (!groups.length) {
+      showToast('选中的开发在当前筛选范围内没有超期项。', 'info');
+      return;
+    }
+    const itemCount = groups.reduce((sum, group) => sum + Number(group.count || 0), 0);
+    const repeatCount = groups.reduce((sum, group) => sum + Number(group.repeatCount || 0), 0);
+    const messageCount = groups.reduce((sum, group) => sum + Number((group.messages || []).length), 0);
+    const confirmed = await confirmDialog({
+      title: '批量发送企微提醒',
+      subtitle: '只向选中的开发发送真实企微消息。',
+      message: `已选择 ${groups.length} 位开发，将发送 ${messageCount} 条企微消息，涉及 ${itemCount} 个超期项，其中重复提醒 ${repeatCount} 项。是否继续？`,
+      confirmText: '批量发送'
+    });
+    if (!confirmed) return;
+    try {
+      const data = await apiRequest('/api/reminders/run', {
+        method: 'POST',
+        body: { accounts, jobId },
+        timeoutMs: 90000
+      });
+      applyReminderData(data);
+      const result = data.result || {};
+      if (result.skipped) showToast('选中的开发当前没有需要提醒的超期项。', 'info');
+      else if (result.failed) showToast(`批量发送完成：成功 ${result.sent} 条，失败 ${result.failed} 条。`, 'warn');
+      else showToast(`批量发送完成：${result.sent} 条企微消息，覆盖 ${result.total} 个超期项。`);
+      renderView(false);
+    } catch (error) {
+      showToast(`批量发送提醒失败：${error.message}`, 'error');
+    }
+  }
+
+  async function clearReminderWebhook() {
+    const confirmed = await confirmDialog({
+      title: '清除企微 Webhook',
+      subtitle: '清除后自动提醒会停止。',
+      message: '确定清除已保存的企微群机器人 Webhook 吗？清除后需要重新填写才能发送提醒。',
+      confirmText: '清除',
+      danger: true
+    });
+    if (!confirmed) return;
+    const id = String(state.reminderSelectedJobId || '');
+    if (!id) {
+      showToast('请先保存任务后再清除 Webhook。', 'warn');
+      return;
+    }
+    try {
+      const data = await apiRequest('/api/reminders', {
+        method: 'POST',
+        body: { id, clearWebhook: true, enabled: false }
+      });
+      applyReminderData(data);
+      showToast('企微 Webhook 已清除，该任务自动提醒已关闭。');
+      renderView(false);
+    } catch (error) {
+      showToast(`清除 Webhook 失败：${error.message}`, 'error');
+    }
+  }
+
+  async function copyReminderMessage(index) {
+    const group = (reminderPreview().groups || [])[Number(index)];
+    if (!group || !group.message) return;
+    try {
+      await navigator.clipboard.writeText(group.message);
+      showToast(`已复制 ${group.name || group.account} 的提醒消息。`);
+    } catch (error) {
+      showToast('复制失败，请手动选择消息文本。', 'error');
+    }
+  }
+
+  /* =========================================================
      Task / Bug drawers
      ========================================================= */
 
@@ -3952,6 +4764,20 @@
       startManualSync();
       return;
     }
+    if (action === 'reminder-refresh') { refreshReminders(true); return; }
+    if (action === 'reminder-new') { beginNewReminderJob(); return; }
+    if (action === 'reminder-select') { selectReminderJob(actionEl.dataset.id); return; }
+    if (action === 'reminder-toggle') { toggleReminderJob(actionEl.dataset.id); return; }
+    if (action === 'reminder-copy-job') { copyReminderJob(actionEl.dataset.id); return; }
+    if (action === 'reminder-run-job') { runReminderJob(actionEl.dataset.id); return; }
+    if (action === 'reminder-delete-job') { deleteReminderJob(actionEl.dataset.id); return; }
+    if (action === 'reminder-delete-current') { deleteReminderJob(state.reminderSelectedJobId); return; }
+    if (action === 'reminder-run') { sendRemindersNow(); return; }
+    if (action === 'reminder-run-selected') { sendRemindersSelected(); return; }
+    if (action === 'reminder-select-all') { setReminderGroupSelection(true); return; }
+    if (action === 'reminder-select-none') { setReminderGroupSelection(false); return; }
+    if (action === 'reminder-clear-webhook') { clearReminderWebhook(); return; }
+    if (action === 'reminder-copy') { copyReminderMessage(actionEl.dataset.index); return; }
     if (action === 'retry-boot') {
       renderBootScreen();
       pullData({ initial: true });
@@ -4225,6 +5051,11 @@
 
   function handleChange(event) {
     const target = event.target;
+    if (target.closest('form[data-form="reminders"]')
+      && target.matches('input[name="productIds"], input[name="versions"], input[name="thresholdDays"], input[name="repeatDays"]')) {
+      queueReminderPreviewRefresh();
+      return;
+    }
     if (target.matches('[data-role="task-status"]')) {
       changeTaskStatus(target.dataset.id, target.value);
       return;
@@ -4297,6 +5128,11 @@
 
   function handleInput(event) {
     const target = event.target;
+    if (target.closest('form[data-form="reminders"]')
+      && target.matches('input[name="thresholdDays"], input[name="repeatDays"]')) {
+      queueReminderPreviewRefresh();
+      return;
+    }
     if (target.id === 'task-search') {
       ui.taskFilters.q = target.value;
       renderTaskResults();
@@ -4323,6 +5159,11 @@
     if (form.matches('form[data-form="profile"]')) {
       event.preventDefault();
       await saveProfile(form);
+    }
+    if (form.matches('form[data-form="reminders"]')) {
+      event.preventDefault();
+      await saveReminders(form);
+      return;
     }
     if (form.matches('form[data-form="bug-edit"]')) {
       event.preventDefault();

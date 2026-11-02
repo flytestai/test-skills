@@ -2,12 +2,24 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const {
+  DEFAULT_REMINDER_CONFIG,
+  DEFAULT_REMINDER_JOB_NAME,
+  MAX_REMINDER_JOBS,
+  REMINDER_JOB_ID_PATTERN,
+  normalizeReminderConfig,
+  normalizeReminderJob,
+  normalizeReminderJobs,
+  normalizeReminderLastSent,
+  normalizeReminderLogs,
+  appendReminderLog
+} = require('./reminders');
 
 const REPORT_FIELDS = ['summary', 'version', 'bugsSummary', 'tasks', 'autojob', 'done', 'bugs', 'ongoing', 'next', 'risks'];
 const RELEASE_PRIORITIES = ['P1', 'P2', 'P3'];
 const TASK_PRIORITIES = ['P0', 'P1', 'P2', 'P3'];
 const LOCAL_TASK_STATUSES = ['todo', 'doing', 'blocked', 'done'];
-const VIEWS = new Set(['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'settings']);
+const VIEWS = new Set(['dashboard', 'releases', 'tasks', 'bugs', 'reports', 'reminders', 'settings']);
 const TASK_SCOPES = new Set(['mine', 'test']);
 const BUG_SCOPES = new Set(['opened', 'assigned', 'all']);
 
@@ -202,6 +214,44 @@ function nextLocalTaskId(tasks) {
   return `LT-${max + 1}`;
 }
 
+function nextReminderJobId(jobs) {
+  let max = 0;
+  (jobs || []).forEach((job) => {
+    const match = String(job && job.id || '').match(/^RJ-(\d+)$/);
+    if (match) max = Math.max(max, Number(match[1]));
+  });
+  return `RJ-${max + 1}`;
+}
+
+function copyReminderJob(job) {
+  return Object.assign({}, job, {
+    weekdays: (job.weekdays || []).slice(),
+    mentionMap: Object.assign({}, job.mentionMap || {}),
+    productIds: (job.productIds || []).slice(),
+    versions: (job.versions || []).slice(),
+    lastSent: Object.assign({}, job.lastSent || {})
+  });
+}
+
+function legacyReminderHasContent(config, lastSent) {
+  const value = config || {};
+  const weekdays = Array.isArray(value.weekdays) ? value.weekdays.slice().sort((a, b) => a - b) : [];
+  return Boolean(
+    value.enabled
+    || value.webhookUrl
+    || value.lastRunAt
+    || value.lastAutoRunDate
+    || Object.keys(value.mentionMap || {}).length
+    || (Array.isArray(value.productIds) && value.productIds.length)
+    || (Array.isArray(value.versions) && value.versions.length)
+    || (Object.keys(lastSent || {}).length)
+    || Number(value.thresholdDays) !== DEFAULT_REMINDER_CONFIG.thresholdDays
+    || Number(value.repeatDays) !== DEFAULT_REMINDER_CONFIG.repeatDays
+    || String(value.scheduleTime || '') !== DEFAULT_REMINDER_CONFIG.scheduleTime
+    || weekdays.join(',') !== DEFAULT_REMINDER_CONFIG.weekdays.slice().sort((a, b) => a - b).join(',')
+  );
+}
+
 function defaultData() {
   return {
     version: 2,
@@ -220,6 +270,15 @@ function defaultData() {
     reports: [],
     releasePlans: {},
     localTasks: [],
+    reminders: Object.assign({}, DEFAULT_REMINDER_CONFIG, {
+      weekdays: DEFAULT_REMINDER_CONFIG.weekdays.slice(),
+      mentionMap: {},
+      productIds: DEFAULT_REMINDER_CONFIG.productIds.slice(),
+      versions: DEFAULT_REMINDER_CONFIG.versions.slice()
+    }),
+    reminderJobs: [],
+    reminderLogs: [],
+    reminderLastSent: {},
     updatedAt: new Date().toISOString()
   };
 }
@@ -325,12 +384,44 @@ class Store {
       const existing = deduped.get(report.date);
       if (!existing || String(report.updatedAt) > String(existing.updatedAt)) deduped.set(report.date, report);
     });
+    let legacyReminders;
+    const rawLegacy = input.reminders && typeof input.reminders === 'object' ? input.reminders : base.reminders;
+    const legacyBase = Object.assign({}, base.reminders, {
+      lastAutoRunDate: rawLegacy.lastAutoRunDate != null ? rawLegacy.lastAutoRunDate : base.reminders.lastAutoRunDate,
+      lastRunAt: rawLegacy.lastRunAt != null ? rawLegacy.lastRunAt : base.reminders.lastRunAt,
+      lastRunResult: rawLegacy.lastRunResult != null ? rawLegacy.lastRunResult : base.reminders.lastRunResult
+    });
+    try {
+      legacyReminders = normalizeReminderConfig(rawLegacy, legacyBase, { strict: false });
+    } catch (error) {
+      legacyReminders = normalizeReminderConfig(base.reminders, legacyBase, { strict: false });
+    }
+    const legacyLastSent = normalizeReminderLastSent(input.reminderLastSent);
+    let reminderJobs = normalizeReminderJobs(input.reminderJobs);
+    if (!reminderJobs.length && legacyReminderHasContent(legacyReminders, legacyLastSent)) {
+      reminderJobs = [normalizeReminderJob(
+        Object.assign({}, legacyReminders, { id: 'RJ-1', name: '默认提醒' }),
+        Object.assign({}, legacyReminders, { lastSent: legacyLastSent }),
+        { strict: false }
+      )];
+    } else if (reminderJobs.length && !Object.keys(reminderJobs[0].lastSent).length
+      && Object.keys(legacyLastSent).length) {
+      // 旧版本只保存了一份全局提醒时间，迁移到第一个任务。
+      reminderJobs[0].lastSent = legacyLastSent;
+    }
+    const reminders = reminderJobs.length
+      ? normalizeReminderConfig(reminderJobs[0], base.reminders, { strict: false })
+      : legacyReminders;
     return {
       version: 2,
       settings,
       reports: Array.from(deduped.values()).sort((a, b) => b.date.localeCompare(a.date)),
       releasePlans: normalizeReleasePlans(input.releasePlans),
       localTasks: normalizeLocalTasks(input.localTasks),
+      reminders,
+      reminderJobs,
+      reminderLogs: normalizeReminderLogs(input.reminderLogs),
+      reminderLastSent: {},
       updatedAt: input.updatedAt || new Date().toISOString()
     };
   }
@@ -465,6 +556,176 @@ class Store {
     this.data.reports.sort((a, b) => b.date.localeCompare(a.date));
     this.save();
     return report;
+  }
+
+  syncLegacyReminderConfig() {
+    const jobs = this.data.reminderJobs || [];
+    // 旧版 reminders 仅是首个任务的镜像；删除全部任务后必须回到空配置，
+    // 否则下次启动会把已删除任务的筛选条件重新迁移成 RJ-1。
+    this.data.reminders = jobs.length
+      ? normalizeReminderConfig(jobs[0], jobs[0], { strict: false })
+      : normalizeReminderConfig({}, null, { strict: false });
+    return this.getReminders();
+  }
+
+  getReminders() {
+    return Object.assign({}, this.data.reminders, {
+      weekdays: (this.data.reminders.weekdays || []).slice(),
+      mentionMap: Object.assign({}, this.data.reminders.mentionMap || {}),
+      productIds: (this.data.reminders.productIds || []).slice(),
+      versions: (this.data.reminders.versions || []).slice()
+    });
+  }
+
+  getReminderJobs() {
+    return (this.data.reminderJobs || []).map(copyReminderJob);
+  }
+
+  getReminderJob(id) {
+    const job = (this.data.reminderJobs || []).find((item) => item.id === String(id || ''));
+    return job ? copyReminderJob(job) : null;
+  }
+
+  createReminderJob(raw) {
+    const jobs = this.data.reminderJobs || [];
+    if (jobs.length >= MAX_REMINDER_JOBS) {
+      throw badRequest(`定时任务最多创建 ${MAX_REMINDER_JOBS} 个。`);
+    }
+    const id = nextReminderJobId(jobs);
+    const input = raw && typeof raw === 'object' ? raw : {};
+    const job = normalizeReminderJob(Object.assign({}, input, {
+      id,
+      name: input.name || DEFAULT_REMINDER_JOB_NAME
+    }), null, { strict: true });
+    jobs.push(job);
+    this.data.reminderJobs = jobs;
+    this.syncLegacyReminderConfig();
+    this.save();
+    return copyReminderJob(job);
+  }
+
+  updateReminderJob(id, raw) {
+    const jobs = this.data.reminderJobs || [];
+    const index = jobs.findIndex((job) => job.id === String(id || ''));
+    if (index < 0) {
+      const error = new Error('定时任务不存在。');
+      error.status = 404;
+      throw error;
+    }
+    const input = raw && typeof raw === 'object' ? raw : {};
+    const job = normalizeReminderJob(Object.assign({}, input, { id: jobs[index].id }), jobs[index], { strict: true });
+    jobs[index] = job;
+    this.data.reminderJobs = jobs;
+    this.syncLegacyReminderConfig();
+    this.save();
+    return copyReminderJob(job);
+  }
+
+  deleteReminderJob(id) {
+    const jobs = this.data.reminderJobs || [];
+    const index = jobs.findIndex((job) => job.id === String(id || ''));
+    if (index < 0) {
+      const error = new Error('定时任务不存在。');
+      error.status = 404;
+      throw error;
+    }
+    jobs.splice(index, 1);
+    this.data.reminderJobs = jobs;
+    this.syncLegacyReminderConfig();
+    this.save();
+    return true;
+  }
+
+  updateReminders(raw) {
+    const jobs = this.data.reminderJobs || [];
+    if (jobs.length) {
+      this.updateReminderJob(jobs[0].id, raw);
+    } else {
+      this.createReminderJob(Object.assign({}, raw, { name: raw && raw.name ? raw.name : '默认提醒' }));
+    }
+    return this.getReminders();
+  }
+
+  getReminderLogs() {
+    return normalizeReminderLogs(this.data.reminderLogs);
+  }
+
+  getReminderLastSent(jobId) {
+    const jobs = this.data.reminderJobs || [];
+    const job = jobId
+      ? jobs.find((item) => item.id === String(jobId))
+      : jobs[0];
+    return Object.assign({}, job && job.lastSent || {});
+  }
+
+  markReminderItemsSent(jobId, items, at) {
+    const jobs = this.data.reminderJobs || [];
+    const job = jobs.find((item) => item.id === String(jobId || ''));
+    if (!job) {
+      const error = new Error('定时任务不存在。');
+      error.status = 404;
+      throw error;
+    }
+    const timestamp = at ? new Date(at) : new Date();
+    const iso = Number.isNaN(timestamp.getTime()) ? new Date().toISOString() : timestamp.toISOString();
+    const map = Object.assign({}, job.lastSent || {});
+    (Array.isArray(items) ? items : []).forEach((item) => {
+      const key = String(item && item.reminderKey || '');
+      if (key) map[key] = iso;
+    });
+    job.lastSent = normalizeReminderLastSent(map);
+    this.save();
+    return Object.assign({}, job.lastSent);
+  }
+
+  recordReminderLog(entry) {
+    this.data.reminderLogs = appendReminderLog(this.data.reminderLogs, entry);
+    this.save();
+    return this.getReminderLogs();
+  }
+
+  finishReminderRun(result, options) {
+    const opts = options || {};
+    const at = new Date().toISOString();
+    const summary = Object.assign({}, result || {}, { at });
+    const jobId = String(opts.jobId || summary.jobId || '');
+    const jobs = this.data.reminderJobs || [];
+    const job = jobs.find((item) => item.id === jobId);
+    if (job) {
+      job.lastRunAt = at;
+      job.lastRunResult = summary;
+      if (opts.autoRun) job.lastAutoRunDate = String(opts.autoRunDate || '');
+      job.updatedAt = at;
+    }
+    // 旧版 reminders 只镜像首个任务，不能把其他任务的执行状态写进去。
+    if (!job || !jobs.length || job.id === jobs[0].id) {
+      this.data.reminders.lastRunAt = at;
+      this.data.reminders.lastRunResult = summary;
+      if (opts.autoRun) {
+        this.data.reminders.lastAutoRunDate = String(opts.autoRunDate || '');
+      }
+      this.data.reminders.updatedAt = at;
+    }
+    this.save();
+    return summary;
+  }
+
+  markReminderAutoRun(date, jobId) {
+    const at = new Date().toISOString();
+    const jobs = this.data.reminderJobs || [];
+    const job = jobId
+      ? jobs.find((item) => item.id === String(jobId))
+      : jobs[0];
+    if (job) {
+      job.lastAutoRunDate = String(date || '');
+      job.updatedAt = at;
+    }
+    if (!job || !jobs.length || job.id === jobs[0].id) {
+      this.data.reminders.lastAutoRunDate = String(date || '');
+      this.data.reminders.updatedAt = at;
+    }
+    this.save();
+    return this.getReminders();
   }
 
   snapshot() {

@@ -216,6 +216,21 @@ Bug:
   reports markdown [YYYY-MM-DD] [--output 文件]
   reports export [YYYY-MM-DD] [--format md|json] [--output 文件]
 
+定时任务:
+  reminders list                   任务列表与每个任务的预览汇总
+  reminders get [--job RJ-1]       指定任务或首个任务的配置、预览汇总与发送记录
+  reminders preview [--job RJ-1]   按开发列出超期 Bug / 任务与企微消息
+  reminders create --name 名称 [--enabled|--disabled] [--webhook URL]
+                 [--threshold-days N] [--repeat-days N] [--time HH:MM] [--weekdays 1,2,3]
+                 [--product-ids 13,47] [--versions 3.0.0,3.1.0]
+                 [--mention 账号=userid,...] [--json JSON]
+  reminders update --job RJ-1 [同名参数]
+  reminders delete --job RJ-1 --yes
+  reminders save [--job RJ-1] [同名参数] [--json JSON]
+                                  不带 --job 时更新首个任务
+  reminders run [--job RJ-1] [--dry-run] [--accounts suntao,liming]
+                                  发送指定任务全部或选中的开发；--dry-run 只刷新预览
+
 设置与连接:
   settings get
   settings update [--role ...] [--team ...] [--sprint ...]
@@ -229,7 +244,7 @@ Bug:
   export backup [--output QDesk_backup_YYYY-MM-DD.json]
   export tasks-csv [--output 文件]
   export bugs-csv [--output 文件]
-  open <dashboard|releases|tasks|bugs|reports|settings>
+  open <dashboard|releases|tasks|bugs|reports|reminders|settings>
   open bug <BugID> [--edit] [--launch]
 
 密码只从 QDESK_ZENTAO_PASSWORD 环境变量或 --password-stdin 读取，不支持 --password。
@@ -625,6 +640,7 @@ function pageUrl(target, edit) {
     tasks: '/#/tasks',
     bugs: '/#/bugs',
     reports: '/#/reports',
+    reminders: '/#/reminders',
     settings: '/#/settings'
   };
   if (routes[view]) return `${base}${routes[view]}`;
@@ -1451,6 +1467,198 @@ async function commandReports(action) {
   fail(`未知日报子命令：${action}。`);
 }
 
+function reminderConfigText(data) {
+  const reminder = data.selectedJob || data.reminders || {};
+  const preview = data.preview || {};
+  const logs = data.logs || [];
+  const weekdays = (reminder.weekdays || []).join(',');
+  const productIds = (reminder.productIds || []).join(',');
+  const versions = (reminder.versions || []).join(',');
+  return [
+    `任务: ${reminder.id ? (reminder.name || '未命名') : '未选择任务'}${reminder.id ? `（${reminder.id}）` : ''}`,
+    `启用: ${reminder.enabled ? '是' : '否'}`,
+    `Webhook: ${reminder.configured ? reminder.webhookMasked : '未配置'}`,
+    `超期阈值: ${reminder.thresholdDays} 天`,
+    `重复提醒: ${Number(reminder.repeatDays) > 0 ? `每 ${reminder.repeatDays} 天` : '仅提醒一次'}`,
+    `计划: 星期 ${weekdays || '未选择'} ${reminder.scheduleTime}`,
+    `产品范围: ${productIds || '全部'}`,
+    `版本范围: ${versions || '全部'}`,
+    `当前超期: ${preview.total || 0} 项（Bug ${preview.bugTotal || 0} / 任务 ${preview.taskTotal || 0}，首次 ${preview.firstCount || 0} / 重复 ${preview.repeatCount || 0}）/ ${preview.groupCount || 0} 位开发 / ${preview.messageCount || 0} 条消息`,
+    `最近发送: ${logs.length} 条记录${reminder.lastRunAt ? `，上次 ${reminder.lastRunAt}` : ''}`
+  ].join('\n');
+}
+
+function reminderJobsText(data) {
+  const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+  if (!jobs.length) return '还没有保存的定时任务。';
+  return [
+    `定时任务 ${jobs.length} 个`,
+    ...jobs.map((job) => {
+      const summary = job.summary || {};
+      const products = (job.productIds || []).join(',') || '全部';
+      const versions = (job.versions || []).join(',') || '全部';
+      return `${job.id}\t${job.enabled ? '启用' : '停用'}\t${job.name}\t阈值 ${job.thresholdDays} 天\t重复 ${Number(job.repeatDays) > 0 ? `${job.repeatDays} 天` : '仅一次'}\t产品 ${products}\t版本 ${versions}\t${summary.total || 0} 项 / ${summary.groupCount || 0} 位开发 / ${summary.messageCount || 0} 条消息`;
+    })
+  ].join('\n');
+}
+
+function reminderPayloadFromOptions() {
+  const payload = {};
+  if (hasFlag('enabled')) payload.enabled = true;
+  if (hasFlag('disabled')) payload.enabled = false;
+  if (hasFlag('clear-webhook')) payload.clearWebhook = true;
+  const name = readOption('name');
+  if (name !== undefined) payload.name = name;
+  const webhook = readOption('webhook');
+  if (webhook !== undefined) payload.webhookUrl = webhook;
+  const threshold = numberOption('threshold-days', undefined);
+  if (threshold !== undefined) payload.thresholdDays = threshold;
+  const repeat = numberOption('repeat-days', undefined);
+  if (repeat !== undefined) payload.repeatDays = repeat;
+  const time = firstValue('time', 'schedule-time');
+  if (time !== undefined) payload.scheduleTime = time;
+  const weekdays = readOption('weekdays');
+  if (weekdays !== undefined) {
+    payload.weekdays = weekdays.split(',').map((day) => Number(day.trim())).filter(Number.isInteger);
+  }
+  const productIds = readOption('product-ids');
+  if (productIds !== undefined) {
+    payload.productIds = productIds.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  const versions = readOption('versions');
+  if (versions !== undefined) {
+    payload.versions = versions.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  const mention = readOption('mention');
+  if (mention !== undefined) {
+    const mentionMap = {};
+    mention.split(',').map((item) => item.trim()).filter(Boolean).forEach((item) => {
+      const match = item.match(/^([^=:：]+)[=:：](.+)$/);
+      if (match) mentionMap[match[1].trim()] = match[2].trim();
+    });
+    payload.mentionMap = mentionMap;
+  }
+  return payload;
+}
+
+async function reminderData(jobId) {
+  return api(`/api/reminders${jobId ? `?jobId=${encodeURIComponent(jobId)}` : ''}`);
+}
+
+function reminderPreviewText(data) {
+  const preview = data.preview || {};
+  const groups = Array.isArray(preview.groups) ? preview.groups : [];
+  const lines = [reminderConfigText(data), ''];
+  if ((preview.productIds || []).length || (preview.versions || []).length) {
+    const options = preview.options || {};
+    const productNames = (preview.productIds || []).map((id) => {
+      const item = (options.products || []).find((product) => String(product.id) === String(id));
+      return item ? item.name : id;
+    });
+    lines.push(`筛选: 产品 ${productNames.join('、') || '全部'} / 版本 ${(preview.versions || []).join('、') || '全部'}`);
+    lines.push('');
+  }
+  if (!groups.length) lines.push('当前没有达到阈值的超期 Bug 或任务。');
+  groups.forEach((group) => {
+    const scope = [];
+    if (group.bugCount) scope.push(`${group.bugCount} 个 Bug`);
+    if (group.taskCount) scope.push(`${group.taskCount} 个任务`);
+    lines.push(`## ${group.name} (@${group.mention}) · ${group.count} 项${scope.length ? `（${scope.join(' / ')}）` : ''} · 最长 ${group.maxDays} 天`);
+    (group.items || []).forEach((item) => {
+      const repeat = item.isRepeat && item.daysSinceReminded != null
+        ? `｜距上次提醒：${item.daysSinceReminded} 天`
+        : '';
+      if (item.kind === 'task') {
+        lines.push(`#${item.id} [任务] ${item.title}`);
+        lines.push(`  项目：${item.product}｜执行：${item.execution}｜模块：${item.module}${item.dueDate ? `｜截止：${item.dueDate}` : ''}｜未处理：${item.days} 天${repeat}`);
+      } else {
+        lines.push(`#${item.id} [Bug${item.severity ? ` ${item.severity}` : ''}] ${item.title}`);
+        lines.push(`  产品：${item.product}｜版本：${item.version}｜模块：${item.module}｜未处理：${item.days} 天${repeat}`);
+      }
+    });
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+async function commandReminders(action) {
+  const jobId = String(readOption('job') || '').trim();
+  if (!action || action === 'list') {
+    const data = await reminderData('');
+    printResult(data, reminderJobsText(data));
+    return;
+  }
+  if (action === 'get' || action === 'show') {
+    const data = await reminderData(jobId);
+    printResult(data, reminderConfigText(data));
+    return;
+  }
+  if (action === 'preview') {
+    const data = await reminderData(jobId);
+    printResult(data, reminderPreviewText(data));
+    return;
+  }
+  if (action === 'create' || action === 'update') {
+    const input = (await readJsonOption()) || {};
+    const payload = { ...input, ...reminderPayloadFromOptions() };
+    if (action === 'update') {
+      if (!jobId) fail('更新定时任务需要 --job RJ-...。');
+      if (input.id === undefined) payload.id = jobId;
+    } else {
+      payload.create = true;
+      if (!payload.name && input.name === undefined) fail('创建定时任务需要 --name。');
+    }
+    if (!Object.keys(payload).length) fail('没有需要保存的定时任务设置。');
+    const data = await request('POST', '/api/reminders', payload);
+    printResult(data, reminderConfigText(data));
+    return;
+  }
+  if (action === 'delete') {
+    if (!jobId) fail('删除定时任务需要 --job RJ-...。');
+    if (!hasFlag('yes') && !DRY_RUN) fail('删除定时任务需要 --yes 确认。', 2);
+    const data = await request('DELETE', `/api/reminders/jobs/${encodeURIComponent(jobId)}`);
+    printResult(data, reminderJobsText(data));
+    return;
+  }
+  if (action === 'save') {
+    const input = (await readJsonOption()) || {};
+    const payload = { ...input, ...reminderPayloadFromOptions() };
+    if (jobId) payload.id = jobId;
+    if (!Object.keys(payload).length) fail('没有需要更新的定时任务设置。');
+    const data = await request('POST', '/api/reminders', payload);
+    printResult(data, reminderConfigText(data));
+    return;
+  }
+  if (action === 'run') {
+    const accountsRaw = readOption('accounts');
+    const accounts = accountsRaw === undefined
+      ? []
+      : accountsRaw.split(',').map((item) => item.trim()).filter(Boolean);
+    const body = {};
+    if (jobId) body.jobId = jobId;
+    if (accounts.length) body.accounts = accounts;
+    if (hasFlag('dry-run')) {
+      body.dryRun = true;
+      const data = await api('/api/reminders/run', { method: 'POST', body });
+      const preview = data.preview || {};
+      printResult(data, `预览已刷新：${preview.total || 0} 项（Bug ${preview.bugTotal || 0} / 任务 ${preview.taskTotal || 0}）/ ${preview.groupCount || 0} 位开发 / ${preview.messageCount || 0} 条消息。`);
+      return;
+    }
+    const data = await request('POST', '/api/reminders/run', body, { timeoutMs: 120000 });
+    const result = data.result || {};
+    printResult(data, [
+      `任务: ${result.jobName || jobId || '首个任务'}${result.jobId ? `（${result.jobId}）` : ''}`,
+      `触发: ${result.trigger || 'manual'}`,
+      `结果: ${result.ok ? '成功' : '失败'}${result.skipped ? '（无需提醒）' : ''}`,
+      `超期项: ${result.total || 0} 个（重复提醒 ${result.repeatTotal || 0} 个） / 开发: ${result.groupCount || 0} 位`,
+      `消息: 成功 ${result.sent || 0} 条 / 失败 ${result.failed || 0} 条`,
+      result.error ? `错误: ${result.error}` : ''
+    ].filter(Boolean).join('\n'));
+    return;
+  }
+  fail(`未知定时任务子命令：${action}。`);
+}
+
 async function commandSettings(action) {
   if (!action || action === 'get') {
     const data = await bootstrap();
@@ -1606,7 +1814,7 @@ async function commandOpen() {
   const second = parsed.positional[2];
   let edit = hasFlag('edit');
   if (target === 'bug' && second) target = `bug/${second}`;
-  if (!target) fail('用法：open <dashboard|releases|tasks|bugs|reports|settings|bug/ID>。');
+  if (!target) fail('用法：open <dashboard|releases|tasks|bugs|reports|reminders|settings|bug/ID>。');
   const url = pageUrl(target, edit);
   if (hasFlag('launch')) launchUrl(url);
   printResult({ url, launched: hasFlag('launch') }, url);
@@ -1661,6 +1869,9 @@ async function main() {
       return;
     case 'reports':
       await commandReports(action);
+      return;
+    case 'reminders':
+      await commandReminders(action);
       return;
     case 'settings':
       await commandSettings(action);

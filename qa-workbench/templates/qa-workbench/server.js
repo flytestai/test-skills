@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('node:http');
+const https = require('node:https');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -43,6 +44,14 @@ const {
   sanitizeSecret
 } = require('./lib/connection');
 const { Store, VIEWS } = require('./lib/store');
+const {
+  normalizeReminderConfig,
+  publicReminderConfig,
+  publicReminderJob,
+  buildReminderPreview,
+  filterReminderPreview,
+  buildWecomPayload
+} = require('./lib/reminders');
 
 const ROOT = __dirname;
 const DATA_FILE = path.join(ROOT, 'data', 'app-data.json');
@@ -753,19 +762,40 @@ async function buildSnapshot(force) {
   });
   warnings.push(...taskWarnings);
   const taskRows = [];
+  const reminderTaskRows = [];
+  const finishedTaskStatuses = new Set(['done', 'closed', 'cancel']);
   taskBundles.forEach(({ exec, tasks: rows }) => {
     rows.forEach((row) => {
+      const assignedTo = String(row.assignedTo || '');
+      const openedBy = String(row.openedBy || '');
+      const mine = Boolean(config.tester.account && assignedTo === config.tester.account);
+      const openedByMeForDeveloper = Boolean(
+        config.tester.account
+        && openedBy === config.tester.account
+        && assignedTo
+        && assignedTo !== config.tester.account
+      );
+      if (!mine && !openedByMeForDeveloper) return;
       const task = normalizeTask(row, {
         users,
         account: config.tester.account,
         execution: exec,
         webUrl
       });
-      // Only the current account's tasks are synchronized into QDesk.
-      if (task.isMine) taskRows.push(task);
+      // Only the current account's tasks are synchronized into the task views.
+      if (task.isMine) {
+        taskRows.push(task);
+        return;
+      }
+      // Tasks I opened and assigned to a developer are kept only for reminders,
+      // so they don't change the “my tasks” scopes, stats or task pages.
+      if (openedByMeForDeveloper && !finishedTaskStatuses.has(task.rawStatus)) {
+        reminderTaskRows.push(task);
+      }
     });
   });
   taskRows.sort(compareTask);
+  reminderTaskRows.sort(compareTask);
 
   const taskMine = taskRows;
   const taskTests = taskRows.filter((task) => task.isTest);
@@ -843,6 +873,7 @@ async function buildSnapshot(force) {
     warnings: cleanWarnings(warnings),
     counts: {
       tasks: taskRows.length,
+      reminderTasks: reminderTaskRows.length,
       myTasks: taskMine.length,
       testTasks: taskTests.length,
       bugs: bugs.length,
@@ -887,6 +918,7 @@ async function buildSnapshot(force) {
     projects: projectNames.length ? projectNames : [],
     projectList: projectGroups,
     tasks: taskRows,
+    reminderTasks: reminderTaskRows,
     bugs,
     bugStats: buildBugStats(bugs),
     bugScopeStats: {
@@ -1052,6 +1084,12 @@ function decorateSnapshot(base) {
     sprint: settings.profile.sprint
   };
   const zentao = base.zentao || {};
+  const reminderJobs = store.getReminderJobs();
+  const reminderJobViews = reminderJobs.map((job) => {
+    const preview = reminderPreviewForJob(job);
+    return { job, preview, summary: reminderSummary(preview) };
+  });
+  const reminderConfig = reminderJobViews.length ? reminderJobViews[0].job : store.getReminders();
   const decorated = {
     ...merged,
     settings,
@@ -1062,6 +1100,15 @@ function decorateSnapshot(base) {
     products: base.products || [],
     projectList: merged.projectList || [],
     projects: base.projects || [],
+    reminders: publicReminderConfig(reminderConfig),
+    reminderJobs: reminderJobViews.map((entry) => Object.assign(publicReminderJob(entry.job), {
+      summary: entry.summary
+    })),
+    reminderSelectedJobId: reminderJobViews.length ? reminderJobViews[0].job.id : '',
+    reminderPreview: reminderJobViews.length
+      ? reminderJobViews[0].preview
+      : reminderPreviewFor(reminderConfig, {}),
+    reminderLogs: store.getReminderLogs(),
     zentao: {
       ...zentao,
       connection: currentConnection(zentao.server || '')
@@ -1098,6 +1145,7 @@ function emptySnapshot() {
     projects: [],
     projectList: [],
     tasks: [],
+    reminderTasks: [],
     bugs: [],
     bugStats: emptyStats,
     bugScopeStats: { opened: emptyStats, assigned: emptyStats, all: emptyStats, autojob: emptyStats },
@@ -1119,6 +1167,11 @@ function emptySnapshot() {
     reports: store.getReports(),
     releasePlans: store.getReleasePlans(),
     releases: [],
+    reminders: publicReminderConfig(store.getReminders()),
+    reminderJobs: [],
+    reminderSelectedJobId: '',
+    reminderPreview: reminderPreviewFor(store.getReminders(), {}),
+    reminderLogs: store.getReminderLogs(),
     creation: {
       product,
       products: [],
@@ -1142,7 +1195,7 @@ function emptySnapshot() {
       testerName,
       warnings: [],
       counts: {
-        tasks: 0, myTasks: 0, testTasks: 0, bugs: 0, myBugs: 0, assignedBugs: 0,
+        tasks: 0, reminderTasks: 0, myTasks: 0, testTasks: 0, bugs: 0, myBugs: 0, assignedBugs: 0,
         products: 0, projects: 0, executions: 0
       }
     },
@@ -1389,6 +1442,346 @@ function startReportScheduler() {
   const bootTimer = setTimeout(catchUpDailyReport, 3000);
   if (bootTimer.unref) bootTimer.unref();
   scheduleNextReportSubmit();
+}
+
+// 企微超期 Bug 提醒：每个工作日检查一次计划时间，按开发分组发送。
+let reminderSchedulerStarted = false;
+let reminderSchedulerTimer = null;
+let reminderRunInflight = false;
+let reminderSchedulerBusy = false;
+// 企微群机器人限制 20 条/分钟。限制必须跨任务共享，否则多个任务连续发送会触发限流。
+const REMINDER_RATE_LIMIT = 20;
+const REMINDER_RATE_WINDOW_MS = 60 * 1000;
+const reminderSendTimes = [];
+
+function reminderPreviewFor(configValue, lastSent) {
+  const cfg = configValue || store.getReminders();
+  return buildReminderPreview({
+    bugs: snapshot && Array.isArray(snapshot.bugs) ? snapshot.bugs : [],
+    tasks: snapshot && Array.isArray(snapshot.reminderTasks) ? snapshot.reminderTasks : [],
+    products: snapshot && Array.isArray(snapshot.products) ? snapshot.products : [],
+    lastSent: lastSent || {},
+    account: config.tester.account,
+    config: cfg,
+    moduleNames: config.zentao.moduleNames || {}
+  });
+}
+
+function reminderPreviewForJob(job) {
+  return reminderPreviewFor(job, job && job.lastSent);
+}
+
+function reminderSummary(preview) {
+  return {
+    total: preview.total || 0,
+    bugTotal: preview.bugTotal || 0,
+    taskTotal: preview.taskTotal || 0,
+    repeatCount: preview.repeatCount || 0,
+    firstCount: preview.firstCount || 0,
+    groupCount: preview.groupCount || 0,
+    messageCount: preview.messageCount || 0
+  };
+}
+
+function reminderResponse(jobId) {
+  const jobs = store.getReminderJobs();
+  const entries = jobs.map((job) => {
+    const preview = reminderPreviewForJob(job);
+    return {
+      job,
+      preview,
+      summary: reminderSummary(preview)
+    };
+  });
+  const selected = (jobId
+    ? entries.find((entry) => entry.job.id === String(jobId))
+    : null) || entries[0] || null;
+  const cfg = selected ? selected.job : store.getReminders();
+  const preview = selected ? selected.preview : reminderPreviewFor(cfg, {});
+  return {
+    jobs: entries.map((entry) => Object.assign(publicReminderJob(entry.job), {
+      summary: entry.summary
+    })),
+    selectedJobId: selected ? selected.job.id : '',
+    selectedJob: selected ? publicReminderJob(selected.job) : null,
+    reminders: publicReminderConfig(cfg),
+    preview,
+    logs: store.getReminderLogs()
+  };
+}
+
+function postWecom(webhookUrl, payload, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let url;
+    try {
+      url = new URL(webhookUrl);
+    } catch (error) {
+      reject(new Error('企微群机器人 Webhook 地址无效。'));
+      return;
+    }
+    const body = Buffer.from(JSON.stringify(payload), 'utf8');
+    const request = https.request({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port || 443,
+      path: `${url.pathname}${url.search}`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': body.length
+      },
+      timeout: timeoutMs || 15000
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on('data', (chunk) => {
+        size += chunk.length;
+        if (size <= 64 * 1024) chunks.push(chunk);
+      });
+      response.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('utf8');
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`企业微信接口返回 HTTP ${response.statusCode}。`));
+          return;
+        }
+        let parsed;
+        try {
+          parsed = JSON.parse(raw || '{}');
+        } catch (error) {
+          reject(new Error('企业微信接口返回了无法解析的内容。'));
+          return;
+        }
+        if (Number(parsed.errcode) !== 0) {
+          reject(new Error(`企业微信发送失败（${parsed.errcode || '未知'}）：${parsed.errmsg || '请检查 Webhook 是否有效。'}`));
+          return;
+        }
+        resolve(parsed);
+      });
+    });
+    request.on('timeout', () => {
+      request.destroy(new Error('企业微信接口请求超时，请检查网络。'));
+    });
+    request.on('error', reject);
+    request.write(body);
+    request.end();
+  });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    if (timer.unref) timer.unref();
+  });
+}
+
+async function reserveReminderSendSlot() {
+  for (;;) {
+    const now = Date.now();
+    while (reminderSendTimes.length && now - reminderSendTimes[0] >= REMINDER_RATE_WINDOW_MS) {
+      reminderSendTimes.shift();
+    }
+    if (reminderSendTimes.length < REMINDER_RATE_LIMIT) break;
+    const waitMs = REMINDER_RATE_WINDOW_MS - (now - reminderSendTimes[0]) + 100;
+    await sleep(Math.max(100, waitMs));
+  }
+  reminderSendTimes.push(Date.now());
+}
+
+async function sendReminderMessages(preview, cfg) {
+  const messages = [];
+  const groupStatus = new Map();
+  preview.groups.forEach((group) => {
+    const groupMessages = Array.isArray(group.messages) ? group.messages : [];
+    groupStatus.set(group.account, { group, total: groupMessages.length, sent: 0, failed: 0 });
+    groupMessages.forEach((message) => messages.push({ group, message }));
+  });
+  const result = {
+    sent: 0,
+    failed: 0,
+    messageCount: messages.length,
+    error: '',
+    sentItems: []
+  };
+  let consecutiveFailures = 0;
+  for (let index = 0; index < messages.length; index += 1) {
+    const entry = messages[index];
+    const status = groupStatus.get(entry.group.account);
+    try {
+      await reserveReminderSendSlot();
+      await postWecom(cfg.webhookUrl, buildWecomPayload(entry.group, entry.message));
+      result.sent += 1;
+      if (status) status.sent += 1;
+      consecutiveFailures = 0;
+    } catch (error) {
+      result.failed += 1;
+      if (status) status.failed += 1;
+      consecutiveFailures += 1;
+      if (!result.error) result.error = error.message;
+      // Webhook 失效时避免对同一个地址连续轰炸，剩余消息直接计为失败。
+      if (consecutiveFailures >= 3) {
+        const remaining = messages.length - index - 1;
+        result.failed += remaining;
+        groupStatus.forEach((entryStatus) => {
+          if (entryStatus.sent + entryStatus.failed < entryStatus.total) entryStatus.failed += 1;
+        });
+        break;
+      }
+    }
+    // 企微群机器人有 20 条/分钟限制，适当拉开间隔，避免整批消息瞬间被限流。
+    if (index < messages.length - 1) await sleep(900);
+  }
+  // 只有该开发的所有分页消息都发送成功，才把这些明细记为“已提醒”，
+  // 避免部分分页失败时把未真正送达的 Bug 推进到下一轮重复提醒。
+  const seen = new Set();
+  groupStatus.forEach((entryStatus) => {
+    if (!entryStatus.total || entryStatus.sent !== entryStatus.total || entryStatus.failed) return;
+    (entryStatus.group.items || []).forEach((item) => {
+      const key = String(item && item.reminderKey || '');
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      result.sentItems.push(item);
+    });
+  });
+  return result;
+}
+
+async function runReminders(options) {
+  const opts = options || {};
+  if (reminderRunInflight) {
+    const error = new Error('提醒任务正在执行，请稍后再试。');
+    error.status = 409;
+    throw error;
+  }
+  const jobs = store.getReminderJobs();
+  const jobId = String(opts.jobId || '');
+  const job = jobId
+    ? jobs.find((item) => item.id === jobId)
+    : jobs[0] || null;
+  if (!job) {
+    const error = new Error('请先创建并保存一个定时任务。');
+    error.status = 400;
+    throw error;
+  }
+  const cfg = job;
+  const fullPreview = reminderPreviewForJob(job);
+  const preview = filterReminderPreview(fullPreview, opts.accounts);
+  if (opts.dryRun) {
+    return Object.assign({ result: null }, reminderResponse(job.id), { preview: fullPreview });
+  }
+  if (!cfg.webhookUrl) {
+    const error = new Error('请先配置企业微信群机器人 Webhook，再发送提醒。');
+    error.status = 400;
+    throw error;
+  }
+  reminderRunInflight = true;
+  const trigger = opts.trigger === 'auto' ? 'auto' : 'manual';
+  let result;
+  try {
+    if (!preview.total) {
+      result = {
+        at: new Date().toISOString(),
+        trigger,
+        jobId: job.id,
+        jobName: job.name,
+        ok: true,
+        skipped: true,
+        total: 0,
+        repeatTotal: 0,
+        groupCount: 0,
+        messageCount: 0,
+        sent: 0,
+        failed: 0,
+        error: ''
+      };
+    } else {
+      const sent = await sendReminderMessages(preview, cfg);
+      const at = new Date().toISOString();
+      if (sent.sentItems.length) store.markReminderItemsSent(job.id, sent.sentItems, at);
+      result = {
+        at,
+        trigger,
+        jobId: job.id,
+        jobName: job.name,
+        ok: sent.failed === 0,
+        skipped: false,
+        total: preview.total,
+        repeatTotal: preview.repeatCount || 0,
+        groupCount: preview.groupCount,
+        messageCount: sent.messageCount,
+        sent: sent.sent,
+        failed: sent.failed,
+        error: sent.error
+      };
+    }
+  } finally {
+    reminderRunInflight = false;
+  }
+  store.finishReminderRun(result, {
+    jobId: job.id,
+    autoRun: trigger === 'auto',
+    autoRunDate: trigger === 'auto' ? String(opts.autoRunDate || Core.localDate(new Date())) : ''
+  });
+  store.recordReminderLog(result);
+  if (trigger === 'manual' && reminderScheduleReachedToday(cfg, new Date())) {
+    // 手动发送后不再让该任务当天重复自动发送。
+    store.markReminderAutoRun(Core.localDate(new Date()), job.id);
+  }
+  if (result.failed) {
+    console.error(`[QDesk] 企微提醒发送失败（${job.name}）：${result.error}`);
+  }
+  return Object.assign({ result }, reminderResponse(job.id));
+}
+
+function reminderScheduleReachedToday(cfg, now) {
+  if (!cfg || !cfg.enabled) return false;
+  const weekdays = Array.isArray(cfg.weekdays) ? cfg.weekdays : [];
+  if (!weekdays.includes(now.getDay())) return false;
+  const current = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  return current >= cfg.scheduleTime;
+}
+
+function reminderDueJobs(now) {
+  const today = Core.localDate(now);
+  return store.getReminderJobs()
+    .filter((job) => (
+      job.enabled
+      && job.webhookUrl
+      && reminderScheduleReachedToday(job, now)
+      && job.lastAutoRunDate !== today
+    ))
+    .map((job) => ({ job, today }));
+}
+
+async function checkReminderSchedule() {
+  if (!snapshot || reminderRunInflight || reminderSchedulerBusy) return;
+  reminderSchedulerBusy = true;
+  try {
+    const due = reminderDueJobs(new Date());
+    for (let index = 0; index < due.length; index += 1) {
+      const entry = due[index];
+      try {
+        await runReminders({
+          trigger: 'auto',
+          jobId: entry.job.id,
+          autoRunDate: entry.today
+        });
+      } catch (error) {
+        console.error(`自动发送企微提醒失败（${entry.job.name}）：`, error.message);
+      }
+      if (index < due.length - 1) await sleep(300);
+    }
+  } finally {
+    reminderSchedulerBusy = false;
+  }
+}
+
+function startReminderScheduler() {
+  if (reminderSchedulerStarted) return;
+  reminderSchedulerStarted = true;
+  const bootTimer = setTimeout(checkReminderSchedule, 5000);
+  if (bootTimer.unref) bootTimer.unref();
+  reminderSchedulerTimer = setInterval(checkReminderSchedule, 30000);
+  if (reminderSchedulerTimer.unref) reminderSchedulerTimer.unref();
 }
 
 function getSnapshot(options) {
@@ -2355,6 +2748,127 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (pathname === '/api/reminders' && req.method === 'GET') {
+    if (!snapshot) triggerSync({ reason: 'reminders' });
+    sendJson(res, 200, { ok: true, data: reminderResponse(url.searchParams.get('jobId') || '') });
+    return;
+  }
+
+  if (pathname === '/api/reminders' && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const body = await readJsonBody(req, 64 * 1024);
+    const input = Object.assign({}, body);
+    const createRequested = input.create === true || input.new === true;
+    const jobId = String(input.id || '').trim();
+    const copyFromId = String(input.copyFromId || '').trim();
+    delete input.create;
+    delete input.new;
+    delete input.id;
+    delete input.copyFromId;
+    // 前端不回传已保存的 Webhook，只提交新地址；留空表示保持不变。
+    if (Object.prototype.hasOwnProperty.call(input, 'webhookUrl')
+      && !String(input.webhookUrl == null ? '' : input.webhookUrl).trim()
+      && input.clearWebhook !== true) {
+      delete input.webhookUrl;
+    }
+    let job;
+    if (jobId) {
+      job = store.updateReminderJob(jobId, input);
+    } else if (createRequested || !store.getReminderJobs().length) {
+      let payload = input;
+      if (copyFromId) {
+        const source = store.getReminderJob(copyFromId);
+        if (!source) throw badRequest('要复制的定时任务不存在。');
+        payload = Object.assign({}, source, {
+          enabled: false,
+          lastAutoRunDate: '',
+          lastRunAt: '',
+          lastRunResult: null
+        }, input);
+      }
+      if (!payload.name) payload.name = copyFromId ? '提醒副本' : '默认提醒';
+      job = store.createReminderJob(payload);
+    } else {
+      job = store.updateReminderJob(store.getReminderJobs()[0].id, input);
+    }
+    // 在计划时间之后保存配置时，不立刻补发当天的自动提醒；需要时可用“立即发送”。
+    const savedAt = new Date();
+    if (reminderScheduleReachedToday(job, savedAt)) {
+      store.markReminderAutoRun(Core.localDate(savedAt), job.id);
+    }
+    snapshotRevision += 1;
+    sendJson(res, 200, { ok: true, data: reminderResponse(job.id) });
+    return;
+  }
+
+  const reminderJobMatch = pathname.match(/^\/api\/reminders\/jobs\/(RJ-\d{1,12})$/);
+  if (reminderJobMatch && req.method === 'DELETE') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    store.deleteReminderJob(reminderJobMatch[1]);
+    snapshotRevision += 1;
+    sendJson(res, 200, { ok: true, data: reminderResponse('') });
+    return;
+  }
+
+  if (pathname === '/api/reminders/preview' && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    if (!snapshot) triggerSync({ reason: 'reminders' });
+    const body = await readJsonBody(req, 64 * 1024);
+    const jobId = String(body.jobId || '').trim();
+    const jobs = store.getReminderJobs();
+    // 未传 jobId 表示正在编辑一个尚未保存的新任务，预览不能沿用已有任务的提醒历史。
+    const job = jobId
+      ? jobs.find((item) => item.id === jobId) || null
+      : null;
+    const base = job || store.getReminders();
+    const draft = Object.assign({}, base);
+    if (Array.isArray(body.productIds)) draft.productIds = body.productIds;
+    if (Array.isArray(body.versions)) draft.versions = body.versions;
+    if (body.thresholdDays != null) draft.thresholdDays = body.thresholdDays;
+    if (body.repeatDays != null) draft.repeatDays = body.repeatDays;
+    const previewConfig = normalizeReminderConfig(draft, base, { strict: true });
+    const preview = reminderPreviewFor(previewConfig, job ? job.lastSent : {});
+    sendJson(res, 200, { ok: true, data: { preview } });
+    return;
+  }
+
+  if (pathname === '/api/reminders/run' && req.method === 'POST') {
+    if (!originAllowed(req)) {
+      sendJson(res, 403, { ok: false, error: { message: '请求来源无效。' } });
+      return;
+    }
+    const body = await readJsonBody(req, 64 * 1024);
+    if (body.dryRun !== true && !snapshot) {
+      triggerSync({ reason: 'reminders' });
+      const error = new Error('禅道数据正在同步，请稍后再发送提醒。');
+      error.status = 409;
+      throw error;
+    }
+    const accounts = Array.isArray(body.accounts)
+      ? body.accounts
+        .map((account) => String(account == null ? '' : account).trim())
+        .filter(Boolean)
+        .slice(0, 100)
+      : [];
+    const data = await runReminders({
+      dryRun: body.dryRun === true,
+      trigger: 'manual',
+      jobId: String(body.jobId || '').trim(),
+      accounts
+    });
+    sendJson(res, 200, { ok: true, data });
+    return;
+  }
+
   const fileMatch = pathname.match(/^\/api\/zentao\/file\/(\d{1,12})$/);
   if (fileMatch && req.method === 'GET') {
     try {
@@ -2444,6 +2958,7 @@ function start() {
     console.log('');
     startSyncScheduler();
     startReportScheduler();
+    startReminderScheduler();
   });
   const shutdown = () => {
     server.close(() => process.exit(0));

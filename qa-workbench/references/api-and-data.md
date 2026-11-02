@@ -304,18 +304,31 @@ The fourth dashboard KPI card is `今日待验证`. It lists every pending-verif
 
 Task scope semantics:
 
-- ZenTao sync imports only tasks whose `assignedTo` is the configured account; tasks assigned to other users are discarded during normalization and never enter the snapshot.
+- ZenTao sync imports only tasks whose `assignedTo` is the configured account into the task page; tasks assigned to other users are discarded from task lists and stats.
+- Tasks opened by the configured account, assigned to another developer and not finished are kept separately in `reminderTasks`. They are used only by scheduled reminders and never enter `tasks`, task stats or release totals.
 - `mine`: synced ZenTao tasks plus QDesk local tasks (local tasks are always mine).
 - `test`: task type is test.
 - `all`: every task retained in the snapshot, i.e. my ZenTao tasks plus local tasks.
+
+## Scheduled reminders
+
+Several independent reminder jobs are supported. Each job has its own ID (`RJ-1`, `RJ-2`, …), name, enabled flag, Webhook, threshold, repeat interval, schedule, weekdays, product / version scope, mention map, `lastAutoRunDate`, `lastRunAt`, `lastRunResult` and `lastSent` history. Up to 30 jobs are allowed.
+
+`GET /api/reminders?jobId=RJ-1` returns `{ jobs, selectedJobId, selectedJob, reminders, preview, logs }`. `jobs` contains every job with a `summary` of its own preview; `selectedJob` / `reminders` describe the chosen job; `preview` is built from that job's `lastSent`. Without `jobId`, the first job is selected. The raw Webhook is never returned; each job exposes `configured`, `webhookMasked`, threshold, repeat interval, schedule, weekdays, product / version scope and the account → WeCom userid map. A preview only includes records **opened by the configured account and assigned to another developer**: Bugs with raw status `active`, and tasks with raw status `wait` / `doing` / `pause` that are not completed. Records assigned back to the configured account, opened by other users, or already finished are excluded. `productIds` and `versions` filter Bugs by `bug.productId` / `bug.version` and intersect when both are set; any active filter excludes tasks because tasks have no reliable version. The age starts at `assignedAt`, falling back to `createdAt` for old snapshots. Items also carry `reminderKey` (`bug:<id>:<assignee>` / `task:<id>:<assignee>`), `lastRemindedAt`, `daysSinceReminded` and `isRepeat`. After a first reminder, an item becomes due again once `daysSinceReminded >= repeatDays`; `repeatDays: 0` disables repeats. Groups are keyed by assignee and include `items`, `bugs`, `tasks`, `count`, `bugCount`, `taskCount`, `repeatCount`, `maxDays` and generated WeCom text; the preview also exposes `total`, `bugTotal`, `taskTotal`, `repeatDays`, `repeatCount`, `firstCount`, `productIds`, `versions`, `filters` and `options.products` / `options.versions` for building the selectors.
+
+`POST /api/reminders` accepts `{ id }` to update a job, `{ create: true, name, ... }` to create one, and `{ create: true, copyFromId, name }` to copy a job without its reminder history and with auto-send disabled. Without `id` or `create` it updates the first job for backward compatibility. Job fields are `name`, `enabled`, `webhookUrl`, `thresholdDays` (1–90), `repeatDays` (0–90, `0` = remind once), `scheduleTime` (`HH:MM`), `weekdays` (`0`–`6`), `productIds`, `versions`, `mentionMap` and `clearWebhook`. Empty product / version arrays mean all. An omitted or empty `webhookUrl` keeps the existing URL. Only `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…` is accepted. `DELETE /api/reminders/jobs/:id` removes a job.
+
+`POST /api/reminders/preview` builds a preview from unsaved draft filters without writing config. It accepts `jobId`, `productIds`, `versions`, `thresholdDays` and `repeatDays`, overlays them on the saved job, and returns `{ preview }`. When `jobId` is omitted the draft is treated as a new job with no reminder history. The UI calls it automatically after product / version checkbox changes, so the preview immediately shows only matching overdue Bugs.
+
+`POST /api/reminders/run` sends immediately for the given `jobId` (or the first job); it rejects the request if no job exists. `{ "dryRun": true }` only returns the preview. Pass `accounts: ["suntao", "liming"]` to batch-send only those developers; omit it to send all groups. WeCom text messages use `mentioned_list` with the mapped userid (the ZenTao account is used when no mapping exists), include product / project, version / execution, module, unhandled days and counts, and are split below the 2048-byte limit. Repeat items append `距上次提醒：N 天`. Bug-only groups use the “Bug 超期未处理提醒” title and the header `以下 N 个 Bug 已超期未处理，请尽快修复。`; task-only and mixed groups end with `请尽快处理。`, and the threshold is not repeated in the message header. Mixed groups also label each line as `[Bug]` or `[任务]`. After a successful send, that job's `lastSent` is updated for each item whose group had all message pages delivered; partially failed groups stay due for the next run. Automatic runs happen per enabled job at most once per local calendar day on a selected weekday at or after its configured time; a server started later that day catches up once per job, and jobs are processed sequentially. All jobs share a global 20-messages-per-minute limiter, so sends across jobs queue instead of tripping the WeCom robot rate limit. The last 20 results are stored in `data/app-data.json`; reminders never write to ZenTao.
 
 ## Local files
 
 | File | Contents | Sensitive |
 | --- | --- | --- |
-| `data/app-data.json` | reports, local tasks, release test windows / pinning / priorities, display profile, UI preferences | moderate |
+| `data/app-data.json` | reports, local tasks, release test windows / pinning / priorities, display profile, UI preferences, reminder jobs (`reminderJobs`), logs and per-job last-reminded times | moderate |
 | `data/zentao-auth.json` | URL, account, plaintext local password, display name, version 2 schema | **yes** |
-| `data/snapshot-cache.json` | full last successful snapshot, including tasks and Bugs | **yes** |
+| `data/snapshot-cache.json` | full last successful snapshot, including tasks, Bugs and reminder-only `reminderTasks` | **yes** |
 | `data/qdesk-autostart.log` | autostart stdout/stderr | low |
 | browser `localStorage:qdesk.ui.v2` | view, scope, sort, report date | low |
 

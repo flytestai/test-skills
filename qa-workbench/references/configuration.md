@@ -200,6 +200,46 @@ Manual tasks created from 任务管理 or `scripts/add-task.mjs` are stored in `
 - They appear in task scopes, project chips, due filters, daily reports and dashboard calculations. The synthetic project name is 本地任务.
 - Delete `data/app-data.json` only after confirming with the user; it also removes reports and release plans.
 
+## Scheduled reminders
+
+Each saved reminder job is stored in `data/app-data.json` under `reminderJobs`; `reminders` mirrors the first job only for backward compatibility. The last 20 send results are in `reminderLogs`, and each job's own last-successful reminder times are stored in `reminderJobs[].lastSent` as `bug:<id>:<assignee>` / `task:<id>:<assignee>`. They are not written to `config.json` and do not require a restart.
+
+```json
+{
+  "reminderJobs": [
+    {
+      "id": "RJ-1",
+      "name": "3.0.0 超期 3 天提醒",
+      "enabled": true,
+      "webhookUrl": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
+      "thresholdDays": 3,
+      "repeatDays": 3,
+      "scheduleTime": "09:30",
+      "weekdays": [1, 2, 3, 4, 5],
+      "productIds": ["52"],
+      "versions": ["3.0.0"],
+      "mentionMap": { "suntao": "SunTao" },
+      "lastAutoRunDate": "",
+      "lastRunAt": "",
+      "lastRunResult": null,
+      "lastSent": {}
+    }
+  ]
+}
+```
+
+- Up to 30 jobs are supported. Each job has an independent name, enabled flag, Webhook, product / version scope, threshold, repeat interval, schedule, weekdays, mention map, last-auto-run date, last-send result and reminder history. Overlapping jobs do not suppress each other.
+- `webhookUrl` is masked by every read API; use the UI or `reminders update --job RJ-1` to replace or clear it. A blank `webhookUrl` in an update keeps the existing URL unless `clearWebhook: true` is sent.
+- Only records opened by the current account and assigned to another developer are eligible: Bugs with raw status `active`, and tasks with raw status `wait` / `doing` / `pause` that are not completed. Records opened by other users, assigned back to the current account, or already resolved / closed / done / cancelled are excluded. Unhandled days start from `assignedAt`, falling back to `createdAt` for old snapshots.
+- `repeatDays` (0–90, default 3) controls repeat reminders per job: after the first reminder, a still-unhandled item is reminded again every `repeatDays` days, indefinitely. `0` means remind once. Records are keyed by `bug:<id>:<assignee>` / `task:<id>:<assignee>` inside that job, so reassigning to another developer starts a fresh timing. A group is marked as reminded only when all of its WeCom message pages were sent successfully.
+- `productIds` and `versions` narrow Bug reminders by `bug.productId` / `bug.version`; empty arrays mean all, and both filters intersect. Any active product / version filter excludes tasks because tasks have no reliable version field. Changing these checkboxes refreshes the preview immediately through `POST /api/reminders/preview` with the unsaved draft filters; the preview refresh does not persist them until the user saves.
+- Manual send uses the selected job's saved filters. The preview lets the user send all groups or batch-send only checked developers via `POST /api/reminders/run { jobId, accounts }`.
+- `mentionMap` maps ZenTao accounts to WeCom userids. Without an entry the ZenTao account itself is used in `mentioned_list`; it may not resolve to a real WeCom user.
+- Automatic sending runs each enabled job at most once per local calendar day on a configured weekday at/after `scheduleTime`. Starting the service later that day catches up once per job. Saving a job after its schedule or manually sending it marks that job's day as done; other jobs are unaffected.
+- All jobs share the WeCom group-robot limit of 20 messages per minute. Sends across jobs are queued and throttled automatically.
+- Legacy single-job data (`reminders` plus `reminderLastSent`) is migrated to `RJ-1` only when it has meaningful content.
+- Module labels use `zentao.moduleNames`; unmapped IDs appear as `模块 <id>`.
+
 ## Customizing module names
 
 If the ZenTao server does not expose module names through the CLI, add a mapping:
