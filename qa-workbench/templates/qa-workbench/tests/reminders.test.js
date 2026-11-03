@@ -327,7 +327,7 @@ test('buildReminderPreview 区分首次与重复提醒并输出距上次提醒�
   assert.equal(preview.repeatCount, 1);
   assert.equal(preview.firstCount, 1);
   assert.equal(preview.groups[0].repeatCount, 1);
-  assert.match(preview.groups[0].message, /你有 2 个 Bug 已超过3天未处理，最长 12 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(preview.groups[0].message, /你有 2 个 Bug 已超过10天未处理，最长 12 天未处理！请尽快修复并更新禅道状态！/);
   assert.doesNotMatch(preview.groups[0].message, /#1 /);
 
   const filtered = Reminders.filterReminderPreview(preview, ['suntao']);
@@ -356,21 +356,29 @@ test('buildReminderPreview 手动预览忽略重复间隔，包含全部超期�
   assert.equal(preview.total, 3);
   assert.equal(preview.repeatCount, 2);
   assert.equal(preview.firstCount, 1);
-  assert.match(preview.groups[0].message, /你有 3 个 Bug 已超过3天未处理，最长 12 天未处理！/);
+  assert.match(preview.groups[0].message, /你有 3 个 Bug 已超过9天未处理，最长 12 天未处理！/);
 });
 
-test('buildReminderPreview 消息中的已超过天数跟随任务阈值实时变化', () => {
-  [3, 5, 7].forEach((thresholdDays) => {
+test('buildReminderPreview 消息按实际最短超期天数展示，而不是固定写阈值', () => {
+  [
+    [7, 10, 3],
+    [10, 10, 3],
+    [12, 12, 2]
+  ].forEach(([thresholdDays, expectedDays, expectedCount]) => {
     const config = Reminders.normalizeReminderConfig({ thresholdDays }, null, { strict: true });
     const preview = Reminders.buildReminderPreview({
       account: ACCOUNT,
       config,
       now: NOW,
-      bugs: [bug({ id: '1', assignedAt: daysAgo(18) })]
+      bugs: [
+        bug({ id: '1', assignedAt: daysAgo(10) }),
+        bug({ id: '2', assignedAt: daysAgo(12) }),
+        bug({ id: '3', assignedAt: daysAgo(19) })
+      ]
     });
     assert.match(
       preview.groups[0].message,
-      new RegExp(`你有 1 个 Bug 已超过${thresholdDays}天未处理，最长 18 天未处理！`)
+      new RegExp(`你有 ${expectedCount} 个 Bug 已超过${expectedDays}天未处理，最长 19 天未处理！`)
     );
   });
 });
@@ -423,7 +431,7 @@ test('buildReminderPreview 按开发分组并生成简短的版本、数量和�
   assert.equal(suntao.maxDays, 7);
   assert.equal(suntao.mention, 'SunTao');
   assert.equal(suntao.mentionMapped, true);
-  assert.match(suntao.message, /@孙涛\s+产品：新好人好股PC客户端\s+版本：3\.0\.0\s+你有 2 个 Bug 已超过3天未处理，最长 7 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(suntao.message, /@孙涛\s+产品：新好人好股PC客户端\s+版本：3\.0\.0\s+你有 2 个 Bug 已超过5天未处理，最长 7 天未处理！请尽快修复并更新禅道状态！/);
   assert.doesNotMatch(suntao.message, /提醒阈值/);
   assert.doesNotMatch(suntao.message, /技术处理/);
   assert.doesNotMatch(suntao.message, /#12021/);
@@ -448,7 +456,7 @@ test('长列表简化为单条摘要，不再把全部 Bug 标题塞进群消息
   assert.equal(preview.messageCount, 1);
   assert.ok(Buffer.byteLength(group.message, 'utf8') <= Reminders.WECOM_TEXT_LIMIT);
   assert.match(group.message, /@孙涛/);
-  assert.match(group.message, /你有 40 个 Bug 已超过3天未处理，最长 8 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(group.message, /你有 40 个 Bug 已超过4天未处理，最长 8 天未处理！请尽快修复并更新禅道状态！/);
   assert.doesNotMatch(group.message, /#13000/);
   assert.doesNotMatch(group.message, /合计：/);
 });
@@ -517,7 +525,7 @@ test('buildReminderPreview 同时汇总 Bug 与任务，并排除别人指派给
   assert.equal(group.bugCount, 1);
   assert.equal(group.taskCount, 1);
   assert.match(group.message, /Bug \/ 任务超期未处理提醒/);
-  assert.match(group.message, /你有 2 项（Bug 1 个、任务 1 个）已超过3天未处理，最长 6 天未处理！请尽快处理并更新禅道状态！/);
+  assert.match(group.message, /你有 2 项（Bug 1 个、任务 1 个）已超过5天未处理，最长 6 天未处理！请尽快处理并更新禅道状态！/);
   assert.doesNotMatch(group.message, /提醒阈值/);
   assert.doesNotMatch(group.message, /\[Bug\] #12021/);
   assert.doesNotMatch(group.message, /\[任务\] #501/);

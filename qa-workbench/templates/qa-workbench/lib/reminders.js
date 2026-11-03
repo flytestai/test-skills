@@ -578,8 +578,10 @@ function buildGroupMessages(group) {
   const countGap = group.taskCount ? '' : ' ';
   const prefix = scope ? `  ${scope}  ` : '  ';
   const thresholdDays = Math.max(1, Number(group.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays);
+  // 文案按本组实际超期项中最短的天数展示，不再固定使用任务的超期阈值。
+  const overdueDays = Math.max(thresholdDays, Number(group.minDays) || thresholdDays);
   return [`【${title}】\n`
-    + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超过${thresholdDays}天未处理，最长 ${group.maxDays} 天未处理！`
+    + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超过${overdueDays}天未处理，最长 ${group.maxDays} 天未处理！`
     + `请尽快${actionText}并更新禅道状态！`];
 }
 
@@ -614,6 +616,7 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
         taskCount: 0,
         repeatCount: 0,
         thresholdDays: Math.max(1, Number(config.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays),
+        minDays: 0,
         maxDays: 0,
         items: [],
         bugs: [],
@@ -631,6 +634,7 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
       group.bugs.push(item);
     }
     group.maxDays = Math.max(group.maxDays, item.days);
+    group.minDays = group.minDays ? Math.min(group.minDays, item.days) : item.days;
     group.items.push(item);
   });
 
