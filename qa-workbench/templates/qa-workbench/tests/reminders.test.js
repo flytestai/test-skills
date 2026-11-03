@@ -327,7 +327,8 @@ test('buildReminderPreview 区分首次与重复提醒并输出距上次提醒�
   assert.equal(preview.repeatCount, 1);
   assert.equal(preview.firstCount, 1);
   assert.equal(preview.groups[0].repeatCount, 1);
-  assert.match(preview.groups[0].message, /你有 2 个 Bug 已超过10天未处理，最长 12 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(preview.groups[0].message, /你有 2 个 Bug 已超过10天未处理，最长 12 天未处理！\n其中 2 个 Bug 待修复，请尽快修复并更新禅道状态。/);
+
   assert.doesNotMatch(preview.groups[0].message, /#1 /);
 
   const filtered = Reminders.filterReminderPreview(preview, ['suntao']);
@@ -392,7 +393,7 @@ test('publicReminderConfig 不回传 Webhook 密钥', () => {
   assert.equal(JSON.stringify(publicConfig).includes('abcdefgh12345678'), false);
 });
 
-test('selectReminderBugs 只选择我提交、已指派给开发且超过阈值的激活 Bug', () => {
+test('selectReminderBugs 按当前责任人选择超期 Bug，并排除自己的待修复项', () => {
   const rows = [
     bug(),
     bug({ id: '2', assignedAt: daysAgo(1) }),
@@ -402,9 +403,53 @@ test('selectReminderBugs 只选择我提交、已指派给开发且超过阈值�
     bug({ id: '6', assignedAt: '', createdAt: daysAgo(6) })
   ];
   const selected = Reminders.selectReminderBugs(rows, ACCOUNT, 3, NOW);
-  assert.deepEqual(selected.map((item) => item.id).sort(), ['12021', '6']);
+  assert.deepEqual(selected.map((item) => item.id).sort(), ['12021', '3', '6']);
   assert.equal(selected.find((item) => item.id === '12021').days, 5);
+  assert.equal(selected.find((item) => item.id === '3').role, 'tester');
   assert.equal(selected.find((item) => item.id === '6').days, 6);
+});
+
+test('buildReminderPreview 按状态提醒产品确认、开发修复和测试验证', () => {
+  const config = Reminders.normalizeReminderConfig({ thresholdDays: 7 }, null, { strict: true });
+  const products = [{
+    id: '52',
+    name: '新好人好股PC客户端',
+    po: 'anlaigen',
+    poName: '安来根',
+    qd: 'weizhen',
+    qdName: '魏振'
+  }];
+  const preview = Reminders.buildReminderPreview({
+    account: ACCOUNT,
+    config,
+    now: NOW,
+    products,
+    bugs: [
+      bug({ id: 'U1', productId: '52', assigneeAccount: 'shesiwei', assignee: '佘思维', confirmed: false, createdAt: daysAgo(14) }),
+      bug({ id: 'U2', productId: '52', assigneeAccount: '', assignee: '', confirmed: false, createdAt: daysAgo(12) }),
+      bug({ id: 'D1', productId: '52', assigneeAccount: 'suntao', assignee: '孙涛', confirmed: true, assignedAt: daysAgo(10) }),
+      bug({
+        id: 'T1', productId: '52', rawStatus: 'resolved', status: 'verifying',
+        assigneeAccount: ACCOUNT, assignee: '魏振', confirmed: true, resolvedAt: daysAgo(8)
+      })
+    ]
+  });
+  const byAccount = new Map(preview.groups.map((group) => [group.account, group]));
+  assert.equal(byAccount.has('shesiwei'), false);
+
+  const product = byAccount.get('anlaigen');
+  assert.equal(product.count, 2);
+  assert.equal(product.reasonCounts.unconfirmed, 1);
+  assert.equal(product.reasonCounts.unassigned, 1);
+  assert.match(product.message, /你有 2 个 Bug 已超过12天未处理，最长 14 天未处理！\n其中 1 个 Bug 待确认、1 个 Bug 待指派，请确认后指派处理人。/);
+
+  const developer = byAccount.get('suntao');
+  assert.equal(developer.reasonCounts.developer, 1);
+  assert.match(developer.message, /其中 1 个 Bug 待修复，请尽快修复并更新禅道状态。/);
+
+  const tester = byAccount.get('weizhen');
+  assert.equal(tester.reasonCounts.tester, 1);
+  assert.match(tester.message, /你有 1 个 Bug 已超过8天未处理，最长 8 天未处理！\n其中 1 个 Bug 待测试，请及时验证并更新禅道状态。/);
 });
 
 test('buildReminderPreview 按开发分组并生成简短的版本、数量和最长未处理天数摘要', () => {
@@ -431,7 +476,8 @@ test('buildReminderPreview 按开发分组并生成简短的版本、数量和�
   assert.equal(suntao.maxDays, 7);
   assert.equal(suntao.mention, 'SunTao');
   assert.equal(suntao.mentionMapped, true);
-  assert.match(suntao.message, /@孙涛\s+产品：新好人好股PC客户端\s+版本：3\.0\.0\s+你有 2 个 Bug 已超过5天未处理，最长 7 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(suntao.message, /@孙涛\s+产品：新好人好股PC客户端\s+版本：3\.0\.0\s+你有 2 个 Bug 已超过5天未处理，最长 7 天未处理！\n其中 2 个 Bug 待修复，请尽快修复并更新禅道状态。/);
+
   assert.doesNotMatch(suntao.message, /提醒阈值/);
   assert.doesNotMatch(suntao.message, /技术处理/);
   assert.doesNotMatch(suntao.message, /#12021/);
@@ -456,7 +502,8 @@ test('长列表简化为单条摘要，不再把全部 Bug 标题塞进群消息
   assert.equal(preview.messageCount, 1);
   assert.ok(Buffer.byteLength(group.message, 'utf8') <= Reminders.WECOM_TEXT_LIMIT);
   assert.match(group.message, /@孙涛/);
-  assert.match(group.message, /你有 40 个 Bug 已超过4天未处理，最长 8 天未处理！请尽快修复并更新禅道状态！/);
+  assert.match(group.message, /你有 40 个 Bug 已超过4天未处理，最长 8 天未处理！\n其中 40 个 Bug 待修复，请尽快修复并更新禅道状态。/);
+
   assert.doesNotMatch(group.message, /#13000/);
   assert.doesNotMatch(group.message, /合计：/);
 });
@@ -525,7 +572,8 @@ test('buildReminderPreview 同时汇总 Bug 与任务，并排除别人指派给
   assert.equal(group.bugCount, 1);
   assert.equal(group.taskCount, 1);
   assert.match(group.message, /Bug \/ 任务超期未处理提醒/);
-  assert.match(group.message, /你有 2 项（Bug 1 个、任务 1 个）已超过5天未处理，最长 6 天未处理！请尽快处理并更新禅道状态！/);
+  assert.match(group.message, /你有 2 项（Bug 1 个、任务 1 个）已超过5天未处理，最长 6 天未处理！\n其中 1 个 Bug 待修复、1 个任务待处理，请及时处理并更新禅道状态。/);
+
   assert.doesNotMatch(group.message, /提醒阈值/);
   assert.doesNotMatch(group.message, /\[Bug\] #12021/);
   assert.doesNotMatch(group.message, /\[任务\] #501/);

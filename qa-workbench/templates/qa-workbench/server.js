@@ -799,6 +799,18 @@ async function loadExecutionTasks(exec, force) {
   }
 }
 
+function accountFromUserName(users, value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (users && users.has(raw)) return raw;
+  if (users) {
+    for (const [account, name] of users.entries()) {
+      if (String(name || '').trim() === raw) return account;
+    }
+  }
+  return raw;
+}
+
 async function buildSnapshot(force) {
   const start = Date.now();
   setCliConcurrency(force ? 4 : 8);
@@ -816,7 +828,9 @@ async function buildSnapshot(force) {
       const previous = ((snapshot && snapshot.products) || []).map((product) => ({
         id: String(product.id),
         name: String(product.name || ''),
-        status: String(product.status || '')
+        status: String(product.status || ''),
+        PO: String(product.PO || product.poName || product.po || ''),
+        QD: String(product.QD || product.qdName || product.qd || '')
       }));
       if (previous.length) warnings.push(`已沿用上次读取的 ${previous.length} 个产品。`);
       return { items: previous };
@@ -842,11 +856,19 @@ async function buildSnapshot(force) {
   const webUrl = version && version.server ? String(version.server) : '';
   const moduleNames = config.zentao.moduleNames || {};
 
-  const productRows = (productsResult.items || []).map((product) => ({
-    id: String(product.id),
-    name: String(product.name || `产品 ${product.id}`),
-    status: String(product.status || '')
-  }));
+  const productRows = (productsResult.items || []).map((product) => {
+    const poName = String(product.PO || '').trim();
+    const qdName = String(product.QD || '').trim();
+    return {
+      id: String(product.id),
+      name: String(product.name || `产品 ${product.id}`),
+      status: String(product.status || ''),
+      po: accountFromUserName(users, poName),
+      poName,
+      qd: accountFromUserName(users, qdName),
+      qdName
+    };
+  });
   const projectRows = (projectsResult.items || []).map((project) => ({
     id: String(project.id),
     name: String(project.name || `项目 ${project.id}`),

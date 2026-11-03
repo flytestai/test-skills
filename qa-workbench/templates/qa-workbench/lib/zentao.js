@@ -339,7 +339,7 @@ async function getProduct(productId, options) {
 }
 
 async function listProducts(options) {
-  return listPaged(['product', '--pick=id,name,status'], {
+  return listPaged(['product', '--pick=id,name,status,PO,QD'], {
     ...options,
     perPage: 200,
     maxPages: 5

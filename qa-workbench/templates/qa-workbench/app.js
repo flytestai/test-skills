@@ -582,7 +582,7 @@
         return {
           eyebrow: 'AUTOMATION / REMINDERS',
           title: '定时任务',
-          subtitle: '按开发汇总我指派后超期未处理的 Bug 与任务，定时在企微群艾特对应开发。'
+          subtitle: '按责任人汇总超期未处理的 Bug 与任务，按当前状态艾特产品、开发或测试。'
         };
       case 'settings':
         return {
@@ -2831,7 +2831,7 @@
   function reminderMentionWarning(previewOrSummary) {
     const count = Number(previewOrSummary && previewOrSummary.mentionUnmappedCount) || 0;
     return count
-      ? ` 其中 ${count} 位开发未配置企微 userid，企微不会真正艾特；建议先补充映射再发送。`
+      ? ` 其中 ${count} 位责任人未配置企微 userid，企微不会真正艾特；建议先补充映射再发送。`
       : '';
   }
 
@@ -2855,21 +2855,32 @@
       : `共 ${group.count} 项 · 最长 ${group.maxDays} 天${repeat}`;
   }
 
+  function reminderReasonText(item) {
+    const labels = {
+      unconfirmed: '待确认',
+      unassigned: '待指派',
+      developer: '待修复',
+      tester: '待测试'
+    };
+    return labels[String(item.reason || '')] || '';
+  }
+
   function reminderItemMeta(item) {
     const base = item.kind === 'task'
       ? `${item.product || '未分类项目'} · 执行 ${item.execution || '未指定'} · 模块 ${item.module || '未指定'}${item.dueDate ? ` · 截止 ${item.dueDate}` : ''}`
       : `${item.product || '未填写产品'} · 版本 ${item.version || '未填写'} · 模块 ${item.module || '未指定'}`;
+    const action = reminderReasonText(item);
     const repeat = item.isRepeat && item.daysSinceReminded != null
       ? ` · 上次提醒 ${item.daysSinceReminded} 天前`
       : ' · 首次提醒';
-    return `${base}${repeat}`;
+    return `${base}${action ? ` · ${action}` : ''}${repeat}`;
   }
 
   function renderReminderGroup(group, index) {
     const items = group.items || group.bugs || [];
     return `<article class="reminder-group">
       <header class="reminder-group-head">
-        <label class="reminder-group-check" title="选择该开发">
+        <label class="reminder-group-check" title="选择该责任人">
           <input type="checkbox" data-reminder-group="${index}" value="${esc(group.account)}" aria-label="选择 ${esc(group.name || group.account)}" checked>
         </label>
         <span class="reminder-avatar">${esc(avatarInitial(group.name || group.account))}</span>
@@ -2950,20 +2961,20 @@
       <div class="reminder-preview-summary">
         <div><strong>${preview.total || 0}</strong><span>超期项（Bug ${preview.bugTotal || 0} · 任务 ${preview.taskTotal || 0}）</span></div>
         <div><strong>${preview.repeatCount || 0}</strong><span>重复提醒（首次 ${preview.firstCount || 0}）</span></div>
-        <div><strong>${preview.groupCount || 0}</strong><span>涉及开发</span></div>
+        <div><strong>${preview.groupCount || 0}</strong><span>涉及责任人</span></div>
         <div><strong>${preview.messageCount || 0}</strong><span>企微消息</span></div>
       </div>
       <div class="reminder-preview-toolbar">
         <span>${icon('filter')}${esc(reminderFilterText(preview))}</span>
         <div class="reminder-preview-actions">
-          <button class="btn btn-sm" type="button" data-action="reminder-select-all">全选开发</button>
+          <button class="btn btn-sm" type="button" data-action="reminder-select-all">全选责任人</button>
           <button class="btn btn-sm" type="button" data-action="reminder-select-none">清空</button>
           <button class="btn btn-sm btn-primary" type="button" data-action="reminder-run-selected">${icon('message')}批量发送选中</button>
         </div>
       </div>
-      ${Number(preview.mentionUnmappedCount) > 0 ? `<div class="reminder-mention-alert">${icon('alert-triangle')}<span>${preview.mentionUnmappedCount} 位开发未配置企微 userid，消息里的 @ 只会显示为普通文字，企微不会真正提醒到人。请在下方「禅道账号 / 姓名 → 企微 userid」中补充映射。</span></div>` : ''}
+      ${Number(preview.mentionUnmappedCount) > 0 ? `<div class="reminder-mention-alert">${icon('alert-triangle')}<span>${preview.mentionUnmappedCount} 位责任人未配置企微 userid，消息里的 @ 只会显示为普通文字，企微不会真正提醒到人。请在下方「禅道账号 / 姓名 → 企微 userid」中补充映射。</span></div>` : ''}
       <div class="reminder-groups">
-        ${groups.length ? groups.map(renderReminderGroup).join('') : `<div class="reminder-empty">${icon('check-circle')}<span>当前没有达到阈值的超期 Bug 或任务。同步禅道后，由我指派给开发且长期未处理的 Bug / 任务会出现在这里。</span></div>`}
+        ${groups.length ? groups.map(renderReminderGroup).join('') : `<div class="reminder-empty">${icon('check-circle')}<span>当前没有达到阈值的超期 Bug 或任务。同步禅道后，当前责任人长期未处理的 Bug / 任务会出现在这里。</span></div>`}
       </div>
     </section>`;
   }
@@ -3008,8 +3019,8 @@
           <span>${esc(reminderJobScopeText(job))}</span>
           <span>阈值 ${job.thresholdDays} 天 · 重复 ${Number(job.repeatDays) > 0 ? `${job.repeatDays} 天` : '仅一次'}</span>
           <span>${esc(reminderJobScheduleText(job))}</span>
-          <span>${summary.total || 0} 个超期项 · ${summary.groupCount || 0} 位开发 · ${summary.messageCount || 0} 条消息</span>
-          ${summary.mentionUnmappedCount ? `<span class="reminder-job-meta-warn">${summary.mentionUnmappedCount} 位开发未配置企微 userid，无法真正艾特</span>` : ''}
+          <span>${summary.total || 0} 个超期项 · ${summary.groupCount || 0} 位责任人 · ${summary.messageCount || 0} 条消息</span>
+          ${summary.mentionUnmappedCount ? `<span class="reminder-job-meta-warn">${summary.mentionUnmappedCount} 位责任人未配置企微 userid，无法真正艾特</span>` : ''}
           ${job.lastRunAt ? `<span>上次发送：${esc(fmtDateTime(job.lastRunAt))}</span>` : ''}
         </div>
       </div>
@@ -3056,7 +3067,7 @@
       <section class="settings-panel reminder-config-panel">
         <div class="settings-panel-head">
           <span class="settings-icon tint-amber">${icon('clock')}</span>
-          <div><h2>${editing ? `编辑任务：${esc(editingJob.name)}` : '新建定时任务'}</h2><p>每天检查当前账号提交并指派给其他开发的激活 Bug 和未完成任务，可按产品、版本筛选，按开发分组发送企微群提醒并艾特对应开发，也支持手动批量发送给选中的开发。</p></div>
+          <div><h2>${editing ? `编辑任务：${esc(editingJob.name)}` : '新建定时任务'}</h2><p>每天检查当前账号提交的激活 Bug 和派出的未完成任务，按 Bug 当前状态确定责任人：未确认 / 未指派提醒产品，已确认待修复提醒开发，已修复待测试提醒测试。按责任人分组发送企微群提醒并艾特对应责任人，也支持手动批量发送给选中的责任人。</p></div>
         </div>
         <div class="reminder-status-strip">
           <span class="${cfg.enabled ? 'is-on' : ''}">${icon('activity')}${cfg.enabled ? '已启用' : '未启用'}</span>
@@ -3088,7 +3099,7 @@
             <div class="form-field">
               <label for="reminder-days">超期阈值（天）</label>
               <input id="reminder-days" name="thresholdDays" type="number" min="1" max="90" value="${Number(cfg.thresholdDays) || 3}">
-              <span class="form-hint">Bug 或任务指派给开发后达到该天数仍未处理即首次提醒。</span>
+              <span class="form-hint">Bug 或任务到达当前责任人后超过该天数仍未处理即首次提醒；Bug 按状态计算，产品从提交时间、测试从修复时间算起。</span>
             </div>
             <div class="form-field">
               <label for="reminder-repeat-days">重复提醒间隔（天）</label>
@@ -3128,7 +3139,7 @@
             <button class="btn" type="button" data-action="reminder-refresh">${icon('refresh')}刷新预览</button>
             ${editing ? `<button class="btn" type="button" data-action="reminder-delete-current">删除此任务</button>` : ''}
           </div>
-          <div class="data-note">${icon('shield')}<span>每个任务独立保存 Webhook、产品 / 版本、阈值和计划；Webhook 只保存在本机 data/app-data.json，接口仅回传掩码。提醒范围仅限当前账号提交并指派给其他开发的激活 Bug 与未完成任务，别人指派给开发的 Bug / 任务不会进入提醒。产品 / 版本筛选只作用于 Bug，选择后任务不参与；提醒不会修改禅道数据。</span></div>
+          <div class="data-note">${icon('shield')}<span>每个任务独立保存 Webhook、产品 / 版本、阈值和计划；Webhook 只保存在本机 data/app-data.json，接口仅回传掩码。提醒范围仅限当前账号提交的激活 Bug 与派出的未完成任务；Bug 会根据当前状态提醒对应责任人（产品确认 / 指派、开发修复、测试验证）。产品 / 版本筛选只作用于 Bug，选择后任务不参与；提醒不会修改禅道数据。</span></div>
         </form>
       </section>
 
@@ -3400,7 +3411,7 @@
     const confirmed = await confirmDialog({
       title: `立即发送：${job.name}`,
       subtitle: '这会使用该任务已保存的配置发送真实消息。',
-      message: `将向 ${summary.groupCount || 0} 位开发发送 ${summary.messageCount || 0} 条企微消息，涉及 ${summary.total || 0} 个超期项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(summary)}是否继续？`,
+      message: `将向 ${summary.groupCount || 0} 位责任人发送 ${summary.messageCount || 0} 条企微消息，涉及 ${summary.total || 0} 个超期项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(summary)}是否继续？`,
       confirmText: '立即发送'
     });
     if (!confirmed) return;
@@ -3462,7 +3473,7 @@
     const confirmed = await confirmDialog({
       title: '立即发送企微提醒',
       subtitle: '这会向企微群发送真实消息。',
-      message: `将向 ${preview.groupCount} 位开发发送 ${preview.messageCount} 条企微消息，涉及 ${preview.total} 个超期项（Bug ${preview.bugTotal || 0} 个、任务 ${preview.taskTotal || 0} 个），其中重复提醒 ${preview.repeatCount || 0} 项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(preview)}是否继续？`,
+      message: `将向 ${preview.groupCount} 位责任人发送 ${preview.messageCount} 条企微消息，涉及 ${preview.total} 个超期项（Bug ${preview.bugTotal || 0} 个、任务 ${preview.taskTotal || 0} 个），其中重复提醒 ${preview.repeatCount || 0} 项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(preview)}是否继续？`,
       confirmText: '立即发送'
     });
     if (!confirmed) return;
@@ -3495,7 +3506,7 @@
     if (!guardReady()) return;
     const accounts = selectedReminderAccounts();
     if (!accounts.length) {
-      showToast('请先勾选要发送的开发。', 'warn');
+      showToast('请先勾选要发送的责任人。', 'warn');
       return;
     }
     const jobId = await persistReminderForm();
@@ -3511,7 +3522,7 @@
     }
     const groups = (preview.groups || []).filter((group) => accounts.includes(String(group.account)));
     if (!groups.length) {
-      showToast('选中的开发在当前筛选范围内没有超期项。', 'info');
+      showToast('选中的责任人在当前筛选范围内没有超期项。', 'info');
       return;
     }
     const itemCount = groups.reduce((sum, group) => sum + Number(group.count || 0), 0);
@@ -3520,8 +3531,8 @@
     const unmappedCount = groups.filter((group) => !group.mentionMapped).length;
     const confirmed = await confirmDialog({
       title: '批量发送企微提醒',
-      subtitle: '只向选中的开发发送真实企微消息。',
-      message: `已选择 ${groups.length} 位开发，将发送 ${messageCount} 条企微消息，涉及 ${itemCount} 个超期项，其中重复提醒 ${repeatCount} 项。手动发送不受重复间隔限制，会包含选中开发当前全部超期项。${reminderMentionWarning({ mentionUnmappedCount: unmappedCount })}是否继续？`,
+      subtitle: '只向选中的责任人发送真实企微消息。',
+      message: `已选择 ${groups.length} 位责任人，将发送 ${messageCount} 条企微消息，涉及 ${itemCount} 个超期项，其中重复提醒 ${repeatCount} 项。手动发送不受重复间隔限制，会包含选中开发当前全部超期项。${reminderMentionWarning({ mentionUnmappedCount: unmappedCount })}是否继续？`,
       confirmText: '批量发送'
     });
     if (!confirmed) return;
@@ -3533,7 +3544,7 @@
       });
       applyReminderData(data);
       const result = data.result || {};
-      if (result.skipped) showToast('选中的开发当前没有需要提醒的超期项。', 'info');
+      if (result.skipped) showToast('选中的责任人当前没有需要提醒的超期项。', 'info');
       else if (result.failed) showToast(`批量发送完成：成功 ${result.sent} 条，失败 ${result.failed} 条。`, 'warn');
       else showToast(`批量发送完成：${result.sent} 条企微消息，覆盖 ${result.total} 个超期项。`);
       renderView(false);

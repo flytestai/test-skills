@@ -334,8 +334,32 @@ function reminderReferenceAt(bug) {
   return NaN;
 }
 
-function unhandledDays(bug, now) {
-  const reference = reminderReferenceAt(bug);
+function reminderReferenceAtForTarget(bug, target) {
+  const role = String((target && target.role) || '');
+  const timeValue = (value) => {
+    if (!value) return NaN;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? NaN : date.getTime();
+  };
+  if (role === 'tester') {
+    // “已修复待测试”从解决时间开始计算，而不是从提单时间开始。
+    return timeValue(bug.resolvedAt)
+      || timeValue(bug.updatedAt)
+      || timeValue(bug.assignedAt)
+      || timeValue(bug.createdAt)
+      || NaN;
+  }
+  if (role === 'product') {
+    // 产品确认 / 指派从 Bug 提交时间开始计算。
+    return timeValue(bug.createdAt)
+      || timeValue(bug.assignedAt)
+      || NaN;
+  }
+  return reminderReferenceAt(bug);
+}
+
+function unhandledDays(bug, now, referenceAt) {
+  const reference = Number.isFinite(referenceAt) ? referenceAt : reminderReferenceAt(bug);
   if (!Number.isFinite(reference)) return 0;
   const millis = Math.max(0, now.getTime() - reference);
   return Math.floor(millis / DAY_MS);
@@ -350,6 +374,85 @@ function isUnhandledBug(bug, account) {
   const mine = bug.isMine === true
     || (account && String(bug.reporterAccount || '') === account);
   return Boolean(mine);
+}
+
+function isReminderBugCandidate(bug, account) {
+  if (!bug || !bug.id) return false;
+  if (bug.isAutojob) return false;
+  const rawStatus = String(bug.rawStatus || '');
+  if (rawStatus === 'closed' || bug.status === 'closed') return false;
+  const mine = bug.isMine === true
+    || bug.isAssignedToMe === true
+    || (account && (
+      String(bug.reporterAccount || '') === account
+      || String(bug.assigneeAccount || '') === account
+    ));
+  return Boolean(mine);
+}
+
+function productIndex(products) {
+  const map = new Map();
+  (Array.isArray(products) ? products : []).forEach((product) => {
+    if (product && product.id != null) map.set(String(product.id), product);
+  });
+  return map;
+}
+
+function productOwnerTarget(bug, productMap, reason) {
+  const product = productMap.get(String(bug.productId || ''));
+  const account = String((product && product.po) || '').trim();
+  if (!account) return null;
+  return {
+    role: 'product',
+    reason,
+    account,
+    name: String((product && product.poName) || account).trim() || account
+  };
+}
+
+// 根据 Bug 当前状态确定这一轮应该提醒谁：
+// 未确认/未指派 -> 产品负责人；已修复待测试 -> 指派的测试；已确认待修复 -> 开发。
+function resolveReminderTarget(bug, productMap, account) {
+  if (!bug || !bug.id) return null;
+  const rawStatus = String(bug.rawStatus || '');
+  const assignee = String(bug.assigneeAccount || '').trim();
+  const reporter = String(bug.reporterAccount || '').trim();
+  const product = productMap.get(String(bug.productId || '')) || {};
+  if (rawStatus === 'resolved') {
+    const qd = String(product.qd || '').trim();
+    const targetAccount = assignee || qd || reporter;
+    if (!targetAccount) return null;
+    return {
+      role: 'tester',
+      reason: 'tester',
+      account: targetAccount,
+      name: String(bug.assignee || product.qdName || bug.reporter || targetAccount).trim() || targetAccount
+    };
+  }
+  if (rawStatus === 'active') {
+    if (!assignee) {
+      const owner = productOwnerTarget(bug, productMap, 'unassigned');
+      if (owner) return owner;
+      return null;
+    }
+    if (!bug.confirmed) {
+      const owner = productOwnerTarget(bug, productMap, 'unconfirmed');
+      if (owner) return owner;
+    }
+    return {
+      role: 'developer',
+      reason: 'developer',
+      account: assignee,
+      name: String(bug.assignee || assignee).trim() || assignee
+    };
+  }
+  if (!assignee) return null;
+  return {
+    role: 'developer',
+    reason: 'developer',
+    account: assignee,
+    name: String(bug.assignee || assignee).trim() || assignee
+  };
 }
 
 const FINISHED_TASK_STATUSES = new Set(['done', 'closed', 'cancel']);
@@ -434,10 +537,10 @@ function reminderTiming(reminderKey, lastSent, now) {
   };
 }
 
-function buildReminderItem(bug, now, moduleNames, lastSent) {
+function buildReminderItem(bug, now, moduleNames, lastSent, target) {
   const moduleId = String(bug.moduleId == null ? '' : bug.moduleId);
   const mappedModule = moduleNames && moduleId ? moduleNames[moduleId] : '';
-  const assigneeAccount = String(bug.assigneeAccount || '').trim();
+  const assigneeAccount = String((target && target.account) || bug.assigneeAccount || '').trim();
   const reminderKey = assigneeAccount ? `bug:${bug.id}:${assigneeAccount}` : '';
   const timing = reminderTiming(reminderKey, lastSent, now);
   return {
@@ -449,9 +552,11 @@ function buildReminderItem(bug, now, moduleNames, lastSent) {
     product: short(bug.project || '未填写产品', 40),
     severity: short(bug.severity || '', 4),
     statusLabel: short(bug.statusLabel || '激活', 12),
-    days: unhandledDays(bug, now),
-    assignee: short(bug.assignee || assigneeAccount, 30),
+    days: unhandledDays(bug, now, reminderReferenceAtForTarget(bug, target)),
+    assignee: short((target && target.name) || bug.assignee || assigneeAccount, 30),
     assigneeAccount,
+    role: (target && target.role) || 'developer',
+    reason: (target && target.reason) || 'developer',
     reminderKey,
     lastRemindedAt: timing.lastRemindedAt,
     daysSinceReminded: timing.daysSinceReminded,
@@ -469,9 +574,16 @@ function selectReminderBugs(bugs, account, thresholdDays, now, moduleNames, filt
   const repeatDays = Math.max(0, Number(opts.repeatDays) || 0);
   const lastSent = opts.lastSent || {};
   const at = now instanceof Date ? now : new Date();
+  const products = productIndex(opts.products);
   return (Array.isArray(bugs) ? bugs : [])
-    .filter((bug) => isUnhandledBug(bug, current) && bugMatchesReminderFilters(bug, filters))
-    .map((bug) => buildReminderItem(bug, at, moduleNames, lastSent))
+    .filter((bug) => isReminderBugCandidate(bug, current) && bugMatchesReminderFilters(bug, filters))
+    .map((bug) => {
+      const target = resolveReminderTarget(bug, products, current);
+      // 待修复的 Bug 不再提醒当前账号自己；待测试 / 待确认仍可提醒当前账号。
+      if (!target || (target.role === 'developer' && target.account === current)) return null;
+      return buildReminderItem(bug, at, moduleNames, lastSent, target);
+    })
+    .filter(Boolean)
     .filter((item) => (opts.includeAll
       ? Number(item.days) >= threshold
       : reminderItemDue(item, threshold, repeatDays)))
@@ -574,15 +686,45 @@ function buildGroupMessages(group) {
     : group.taskCount
       ? `${group.count} 个任务`
       : `${group.count} 个 Bug`;
-  const actionText = group.taskCount ? '处理' : '修复';
   const countGap = group.taskCount ? '' : ' ';
   const prefix = scope ? `  ${scope}  ` : '  ';
   const thresholdDays = Math.max(1, Number(group.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays);
   // 文案按本组实际超期项中最短的天数展示，不再固定使用任务的超期阈值。
   const overdueDays = Math.max(thresholdDays, Number(group.minDays) || thresholdDays);
+
+  const reasons = group.reasonCounts || {};
+  const unconfirmed = Number(reasons.unconfirmed) || 0;
+  const unassigned = Number(reasons.unassigned) || 0;
+  const developer = Number(reasons.developer) || 0;
+  const tester = Number(reasons.tester) || 0;
+  const taskCount = Number(group.taskCount) || 0;
+  const detailParts = [];
+  if (unconfirmed) detailParts.push(`${unconfirmed} 个 Bug 待确认`);
+  if (unassigned) detailParts.push(`${unassigned} 个 Bug 待指派`);
+  if (developer) detailParts.push(`${developer} 个 Bug 待修复`);
+  if (tester) detailParts.push(`${tester} 个 Bug 待测试`);
+  if (taskCount) detailParts.push(`${taskCount} 个任务待处理`);
+
+  const hasProduct = unconfirmed + unassigned > 0;
+  const hasDeveloper = developer > 0;
+  const hasTester = tester > 0;
+  const hasTask = taskCount > 0;
+  let action = '请及时处理并更新禅道状态。';
+  if (hasProduct && !hasDeveloper && !hasTester && !hasTask) {
+    action = '请确认后指派处理人。';
+  } else if (!hasProduct && !hasDeveloper && hasTester && !hasTask) {
+    action = '请及时验证并更新禅道状态。';
+  } else if (!hasProduct && hasDeveloper && !hasTester && !hasTask) {
+    action = '请尽快修复并更新禅道状态。';
+  } else if (!hasProduct && !hasDeveloper && !hasTester && hasTask) {
+    action = '请尽快处理并更新禅道状态。';
+  } else if (hasProduct && hasDeveloper && !hasTester && !hasTask) {
+    action = '请及时确认并安排修复。';
+  }
+  const detailLine = detailParts.length ? `\n其中 ${detailParts.join('、')}，${action}` : '';
   return [`【${title}】\n`
     + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超过${overdueDays}天未处理，最长 ${group.maxDays} 天未处理！`
-    + `请尽快${actionText}并更新禅道状态！`];
+    + detailLine];
 }
 
 function buildReminderGroups(sources, account, config, now, moduleNames) {
@@ -592,6 +734,7 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
   const selectionOptions = {
     lastSent: input.lastSent || {},
     repeatDays: config.repeatDays,
+    products: input.products || [],
     // 手动发送 / 手动预览不受重复提醒间隔影响，始终展示当前全部超期项。
     includeAll: Boolean(input.includeAll)
   };
@@ -618,6 +761,12 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
         thresholdDays: Math.max(1, Number(config.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays),
         minDays: 0,
         maxDays: 0,
+        reasonCounts: {
+          unconfirmed: 0,
+          unassigned: 0,
+          developer: 0,
+          tester: 0
+        },
         items: [],
         bugs: [],
         tasks: []
@@ -632,6 +781,8 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
     } else {
       group.bugCount += 1;
       group.bugs.push(item);
+      const reason = String(item.reason || item.role || 'developer');
+      group.reasonCounts[reason] = (group.reasonCounts[reason] || 0) + 1;
     }
     group.maxDays = Math.max(group.maxDays, item.days);
     group.minDays = group.minDays ? Math.min(group.minDays, item.days) : item.days;
@@ -650,8 +801,9 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
 function buildReminderOptions(options) {
   const opts = options || {};
   const account = String(opts.account || '').trim();
+  const productMap = productIndex(opts.products);
   const bugs = (Array.isArray(opts.bugs) ? opts.bugs : [])
-    .filter((bug) => isUnhandledBug(bug, account));
+    .filter((bug) => isReminderBugCandidate(bug, account) && resolveReminderTarget(bug, productMap, account));
   const products = new Map();
   (Array.isArray(opts.products) ? opts.products : []).forEach((product) => {
     const id = String(product && product.id || '').trim();
@@ -715,6 +867,7 @@ function buildReminderPreview(options) {
     {
       bugs: opts.bugs || [],
       tasks: opts.tasks || [],
+      products: opts.products || [],
       lastSent: opts.lastSent || {},
       includeAll: opts.includeAll === true
     },
@@ -820,6 +973,8 @@ module.exports = {
   reminderReferenceAt,
   unhandledDays,
   isUnhandledBug,
+  isReminderBugCandidate,
+  resolveReminderTarget,
   isUnhandledTask,
   bugMatchesReminderFilters,
   reminderFilters,
