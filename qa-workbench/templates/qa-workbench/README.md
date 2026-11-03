@@ -113,6 +113,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - 详情页与编辑页提供与禅道一致的操作：编辑、指派、解决、关闭、激活、删除；禅道 22.5 及以上额外提供「确认」。
 - 解决时可选择解决方案、解决版本、指派人和备注；激活时可调整影响版本；关闭可填写备注。
 - 所有写入都先经过本地参数校验，再调用 `zentao bug update / resolve / close / activate / confirm / delete`；成功后只重新读取该 Bug 并增量更新本地快照，不触发全量同步。单条读取失败时才回退到后台全量同步。
+- **新建 Bug 不再等待后台同步**：创建成功后立即用提交参数写入本地快照，Bug 列表、统计、发版和日报同步更新；随后后台读取该 Bug 详情补全字段。通过 skill 或外部 CLI 创建时，可调用 `POST /api/bugs/:id/refresh`（或 `node scripts/qdesk.mjs bugs refresh <id>`）即时写入。
 - **关闭并同步已改为即时反馈**：点击后前端先把该 Bug 本地置为「已关闭」并立即收起弹窗，再等待禅道返回；服务端优先使用关闭接口返回的数据更新快照，没有完整数据时先写乐观状态，并把单条复核放到后台。这样不再串行等待「关闭 + 再查一次」两个禅道 CLI 调用。复核失败会回退本地状态并提示错误。
 - 受禅道 22.4 CLI 接口限制，所属产品与所属模块不能在 QDesk 修改；需要时请到禅道调整。
 - 删除是不可逆的正式操作，提交前会二次确认。
@@ -255,8 +256,8 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 | GET | `/api/bootstrap` | 立即返回本地快照；`?meta=1` 返回同步状态；`?refresh=1` 触发后台刷新 |
 | POST | `/api/sync` | 发起后台同步，返回 `202`；`?force=0` 使用增量快路径（默认强制刷新基础数据） |
 | GET | `/api/bugs?scope=opened\|assigned\|autojob\|all` | Bug 列表与统计 |
-| POST | `/api/bugs` | 创建正式 Bug |
-| POST | `/api/bugs/:id/refresh` | 只读取并刷新这一条 Bug，不触发全量同步 |
+| POST | `/api/bugs` | 创建正式 Bug，并立即写入本地快照（后台补全详情） |
+| POST | `/api/bugs/:id/refresh` | 立即把指定 Bug 写入本地快照，供 skill / 外部创建后调用，不触发全量同步 |
 | GET | `/api/tasks?scope=mine\|test\|all` | 任务列表与统计 |
 | POST | `/api/tasks` | 创建本地任务（标题、内容、开始 / 结束时间、优先级、置顶） |
 | PATCH | `/api/tasks/:id` | 更新本地任务、状态或置顶 |

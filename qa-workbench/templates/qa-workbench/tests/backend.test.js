@@ -7,6 +7,7 @@ const path = require('node:path');
 
 const {
   validateBugInput,
+  buildOptimisticCreatedBug,
   parseSeverityInput,
   scopeBugs,
   scopeTasks,
@@ -155,6 +156,27 @@ test('validateBugInput rejects invalid fields before any CLI write', () => {
       return true;
     });
   });
+});
+
+test('buildOptimisticCreatedBug writes a complete local Bug before the detail refresh', () => {
+  const bug = buildOptimisticCreatedBug({
+    productId: '52',
+    title: '【自选股】示例问题',
+    severity: 3,
+    pri: 3,
+    type: 'codeerror',
+    openedBuild: '3.0.2',
+    steps: '复现步骤',
+    assignedTo: 'maohaibiao'
+  }, { id: 12106 }, 12106, 'weizhen', '2026-11-03T08:00:00.000Z');
+  assert.equal(bug.id, '12106');
+  assert.equal(bug.product, '52');
+  assert.equal(bug.title, '【自选股】示例问题');
+  assert.equal(bug.openedBy, 'weizhen');
+  assert.equal(bug.assignedTo, 'maohaibiao');
+  assert.equal(bug.assignedDate, '2026-11-03T08:00:00.000Z');
+  assert.equal(bug.status, 'active');
+  assert.equal(bug.openedBuild, '3.0.2');
 });
 
 test('parseSeverityInput supports P labels and raw priorities', () => {

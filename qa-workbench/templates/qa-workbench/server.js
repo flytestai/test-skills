@@ -2272,6 +2272,34 @@ function validateBugInput(body) {
   };
 }
 
+function buildOptimisticCreatedBug(payload, created, bugId, account, now) {
+  const input = payload || {};
+  const result = created || {};
+  const timestamp = now || new Date().toISOString();
+  const assignedTo = result.assignedTo != null ? String(result.assignedTo) : String(input.assignedTo || '');
+  return {
+    ...result,
+    id: String(bugId || result.id || ''),
+    product: String(result.product || input.productId || ''),
+    module: result.module != null ? result.module : 0,
+    title: result.title || input.title || '',
+    severity: result.severity || input.severity,
+    pri: result.pri || input.pri,
+    type: result.type || input.type,
+    openedBuild: result.openedBuild || input.openedBuild,
+    steps: result.steps || input.steps || '',
+    openedBy: result.openedBy || account || '',
+    openedDate: result.openedDate || timestamp,
+    assignedTo,
+    assignedDate: result.assignedDate || (assignedTo ? timestamp : ''),
+    status: result.status || 'active',
+    confirmed: result.confirmed || '0',
+    project: result.project || input.projectId || '',
+    execution: result.execution || input.executionId || '',
+    lastEditedDate: result.lastEditedDate || timestamp
+  };
+}
+
 function requestTimeout(ms) {
   return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
     ? AbortSignal.timeout(ms)
@@ -2745,10 +2773,30 @@ async function handleApi(req, res, url) {
     const bugId = created.id || created.bugID || created.bugId || (created.bug && created.bug.id) || '';
     let incremental = false;
     if (bugId) {
+      // 先用创建参数写入本地快照，保证 Bug 列表、统计、发版和日报立即更新；
+      // 随后再在后台用禅道详情补全真实字段，不阻塞创建响应。
+      const optimistic = buildOptimisticCreatedBug(
+        payload,
+        created,
+        bugId,
+        config.tester.account,
+        new Date().toISOString()
+      );
       try {
-        incremental = await refreshSnapshotBug(String(bugId));
+        incremental = applyRawBugToSnapshot(optimistic, bugId);
       } catch (error) {
-        console.error(`[QDesk] 单条 Bug 刷新失败（#${bugId}）：`, error.message);
+        console.error(`[QDesk] 创建后本地写入失败（#${bugId}）：`, error.message);
+      }
+      if (incremental) {
+        refreshSnapshotBug(String(bugId)).catch((error) => {
+          console.error(`[QDesk] 创建后详情补全失败（#${bugId}）：`, error.message);
+        });
+      } else {
+        try {
+          incremental = await refreshSnapshotBug(String(bugId));
+        } catch (error) {
+          console.error(`[QDesk] 单条 Bug 刷新失败（#${bugId}）：`, error.message);
+        }
       }
     }
     if (!incremental) triggerSync({ force: true, reason: 'bug-created' });
@@ -3295,6 +3343,7 @@ module.exports = {
   emptySnapshot,
   loadSnapshotCache,
   validateBugInput,
+  buildOptimisticCreatedBug,
   scopeBugs,
   scopeTasks,
   parseSeverityInput,
