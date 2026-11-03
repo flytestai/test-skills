@@ -2785,7 +2785,7 @@
     return `<section class="settings-panel reminder-preview-panel">
       <div class="settings-panel-head">
         <span class="settings-icon tint-red">${icon('message')}</span>
-        <div><h2>发送预览</h2><p>${preview.generatedAt ? `更新于 ${esc(fmtDateTime(preview.generatedAt))}` : '选择筛选条件后自动刷新'} · 首次阈值 ${preview.thresholdDays || cfg.thresholdDays} 天 · 重复间隔 ${Number(preview.repeatDays || cfg.repeatDays) > 0 ? `${Number(preview.repeatDays || cfg.repeatDays)} 天` : '仅一次'} · 共 ${preview.messageCount || 0} 条企微消息</p></div>
+        <div><h2>发送预览</h2><p>${preview.generatedAt ? `更新于 ${esc(fmtDateTime(preview.generatedAt))}` : '选择筛选条件后自动刷新'} · 首次阈值 ${preview.thresholdDays || cfg.thresholdDays} 天 · 重复间隔 ${Number(preview.repeatDays || cfg.repeatDays) > 0 ? `${Number(preview.repeatDays || cfg.repeatDays)} 天` : '仅一次'} · 共 ${preview.messageCount || 0} 条企微消息 · <strong>手动发送不受重复间隔限制</strong></p></div>
       </div>
       <div class="reminder-preview-summary">
         <div><strong>${preview.total || 0}</strong><span>超期项（Bug ${preview.bugTotal || 0} · 任务 ${preview.taskTotal || 0}）</span></div>
@@ -3089,7 +3089,9 @@
       thresholdDays: body.thresholdDays,
       repeatDays: body.repeatDays,
       productIds: body.productIds,
-      versions: body.versions
+      versions: body.versions,
+      // 手动发送预览不按重复提醒间隔过滤，勾选筛选后立即展示全部超期项。
+      includeAll: true
     };
   }
 
@@ -3238,7 +3240,7 @@
     const confirmed = await confirmDialog({
       title: `立即发送：${job.name}`,
       subtitle: '这会使用该任务已保存的配置发送真实消息。',
-      message: `将向 ${summary.groupCount || 0} 位开发发送 ${summary.messageCount || 0} 条企微消息，涉及 ${summary.total || 0} 个超期项。${reminderMentionWarning(summary)}是否继续？`,
+      message: `将向 ${summary.groupCount || 0} 位开发发送 ${summary.messageCount || 0} 条企微消息，涉及 ${summary.total || 0} 个超期项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(summary)}是否继续？`,
       confirmText: '立即发送'
     });
     if (!confirmed) return;
@@ -3300,7 +3302,7 @@
     const confirmed = await confirmDialog({
       title: '立即发送企微提醒',
       subtitle: '这会向企微群发送真实消息。',
-      message: `将向 ${preview.groupCount} 位开发发送 ${preview.messageCount} 条企微消息，涉及 ${preview.total} 个超期项（Bug ${preview.bugTotal || 0} 个、任务 ${preview.taskTotal || 0} 个），其中重复提醒 ${preview.repeatCount || 0} 项。${reminderMentionWarning(preview)}是否继续？`,
+      message: `将向 ${preview.groupCount} 位开发发送 ${preview.messageCount} 条企微消息，涉及 ${preview.total} 个超期项（Bug ${preview.bugTotal || 0} 个、任务 ${preview.taskTotal || 0} 个），其中重复提醒 ${preview.repeatCount || 0} 项。手动发送不受重复间隔限制，会包含当前全部超期项。${reminderMentionWarning(preview)}是否继续？`,
       confirmText: '立即发送'
     });
     if (!confirmed) return;
@@ -3359,7 +3361,7 @@
     const confirmed = await confirmDialog({
       title: '批量发送企微提醒',
       subtitle: '只向选中的开发发送真实企微消息。',
-      message: `已选择 ${groups.length} 位开发，将发送 ${messageCount} 条企微消息，涉及 ${itemCount} 个超期项，其中重复提醒 ${repeatCount} 项。${reminderMentionWarning({ mentionUnmappedCount: unmappedCount })}是否继续？`,
+      message: `已选择 ${groups.length} 位开发，将发送 ${messageCount} 条企微消息，涉及 ${itemCount} 个超期项，其中重复提醒 ${repeatCount} 项。手动发送不受重复间隔限制，会包含选中开发当前全部超期项。${reminderMentionWarning({ mentionUnmappedCount: unmappedCount })}是否继续？`,
       confirmText: '批量发送'
     });
     if (!confirmed) return;

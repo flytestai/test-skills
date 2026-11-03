@@ -335,6 +335,30 @@ test('buildReminderPreview 区分首次与重复提醒并输出距上次提醒�
   assert.equal(filtered.firstCount, 1);
 });
 
+test('buildReminderPreview 手动预览忽略重复间隔，包含全部超期项', () => {
+  const config = Reminders.normalizeReminderConfig({ thresholdDays: 3, repeatDays: 3 }, null, { strict: true });
+  const preview = Reminders.buildReminderPreview({
+    account: ACCOUNT,
+    config,
+    now: NOW,
+    includeAll: true,
+    bugs: [
+      bug({ id: '1', assignedAt: daysAgo(10) }),
+      bug({ id: '2', assignedAt: daysAgo(9) }),
+      bug({ id: '3', assignedAt: daysAgo(12) })
+    ],
+    lastSent: {
+      'bug:1:suntao': daysAgo(4),
+      'bug:2:suntao': daysAgo(1)
+    }
+  });
+  assert.deepEqual(preview.groups[0].items.map((item) => item.id).sort(), ['1', '2', '3']);
+  assert.equal(preview.total, 3);
+  assert.equal(preview.repeatCount, 2);
+  assert.equal(preview.firstCount, 1);
+  assert.match(preview.groups[0].message, /你有 3 个 Bug 已超期，最长 12 天未处理！/);
+});
+
 test('publicReminderConfig 不回传 Webhook 密钥', () => {
   const config = Reminders.normalizeReminderConfig({ enabled: true, webhookUrl: WEBHOOK }, null, { strict: true });
   const publicConfig = Reminders.publicReminderConfig(config);

@@ -472,7 +472,9 @@ function selectReminderBugs(bugs, account, thresholdDays, now, moduleNames, filt
   return (Array.isArray(bugs) ? bugs : [])
     .filter((bug) => isUnhandledBug(bug, current) && bugMatchesReminderFilters(bug, filters))
     .map((bug) => buildReminderItem(bug, at, moduleNames, lastSent))
-    .filter((item) => reminderItemDue(item, threshold, repeatDays))
+    .filter((item) => (opts.includeAll
+      ? Number(item.days) >= threshold
+      : reminderItemDue(item, threshold, repeatDays)))
     .sort((a, b) => b.days - a.days || String(a.id).localeCompare(String(b.id)));
 }
 
@@ -517,7 +519,9 @@ function selectReminderTasks(tasks, account, thresholdDays, now, moduleNames, fi
   return (Array.isArray(tasks) ? tasks : [])
     .filter((task) => isUnhandledTask(task, current))
     .map((task) => buildReminderTaskItem(task, at, moduleNames, lastSent))
-    .filter((item) => reminderItemDue(item, threshold, repeatDays))
+    .filter((item) => (opts.includeAll
+      ? Number(item.days) >= threshold
+      : reminderItemDue(item, threshold, repeatDays)))
     .sort((a, b) => b.days - a.days || String(a.id).localeCompare(String(b.id)));
 }
 
@@ -584,7 +588,9 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
   const filters = reminderFilters(config);
   const selectionOptions = {
     lastSent: input.lastSent || {},
-    repeatDays: config.repeatDays
+    repeatDays: config.repeatDays,
+    // 手动发送 / 手动预览不受重复提醒间隔影响，始终展示当前全部超期项。
+    includeAll: Boolean(input.includeAll)
   };
   const bugs = selectReminderBugs(input.bugs || [], account, config.thresholdDays, at, moduleNames, filters, selectionOptions);
   const tasks = selectReminderTasks(input.tasks || [], account, config.thresholdDays, at, moduleNames, filters, selectionOptions);
@@ -700,7 +706,12 @@ function buildReminderPreview(options) {
   const config = normalizeReminderConfig(opts.config || {}, null, { strict: false });
   const filters = reminderFilters(config);
   const groups = buildReminderGroups(
-    { bugs: opts.bugs || [], tasks: opts.tasks || [], lastSent: opts.lastSent || {} },
+    {
+      bugs: opts.bugs || [],
+      tasks: opts.tasks || [],
+      lastSent: opts.lastSent || {},
+      includeAll: opts.includeAll === true
+    },
     opts.account || '',
     config,
     now,

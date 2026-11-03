@@ -1086,7 +1086,8 @@ function decorateSnapshot(base) {
   const zentao = base.zentao || {};
   const reminderJobs = store.getReminderJobs();
   const reminderJobViews = reminderJobs.map((job) => {
-    const preview = reminderPreviewForJob(job);
+    // 首页 / 任务列表展示的是手动预览，不受重复提醒间隔与上次发送时间影响。
+    const preview = reminderPreviewForJob(job, { includeAll: true });
     return { job, preview, summary: reminderSummaryForJob(job, preview) };
   });
   const reminderConfig = reminderJobViews.length ? reminderJobViews[0].job : store.getReminders();
@@ -1107,7 +1108,7 @@ function decorateSnapshot(base) {
     reminderSelectedJobId: reminderJobViews.length ? reminderJobViews[0].job.id : '',
     reminderPreview: reminderJobViews.length
       ? reminderJobViews[0].preview
-      : reminderPreviewFor(reminderConfig, {}),
+      : reminderPreviewFor(reminderConfig, {}, { includeAll: true }),
     reminderLogs: store.getReminderLogs(),
     zentao: {
       ...zentao,
@@ -1454,8 +1455,9 @@ const REMINDER_RATE_LIMIT = 20;
 const REMINDER_RATE_WINDOW_MS = 60 * 1000;
 const reminderSendTimes = [];
 
-function reminderPreviewFor(configValue, lastSent) {
+function reminderPreviewFor(configValue, lastSent, options) {
   const cfg = configValue || store.getReminders();
+  const opts = options || {};
   return buildReminderPreview({
     bugs: snapshot && Array.isArray(snapshot.bugs) ? snapshot.bugs : [],
     tasks: snapshot && Array.isArray(snapshot.reminderTasks) ? snapshot.reminderTasks : [],
@@ -1463,12 +1465,13 @@ function reminderPreviewFor(configValue, lastSent) {
     lastSent: lastSent || {},
     account: config.tester.account,
     config: cfg,
-    moduleNames: config.zentao.moduleNames || {}
+    moduleNames: config.zentao.moduleNames || {},
+    includeAll: opts.includeAll === true
   });
 }
 
-function reminderPreviewForJob(job) {
-  return reminderPreviewFor(job, job && job.lastSent);
+function reminderPreviewForJob(job, options) {
+  return reminderPreviewFor(job, job && job.lastSent, options);
 }
 
 function reminderSummary(preview) {
@@ -1485,10 +1488,13 @@ function reminderSummary(preview) {
 }
 
 function reminderSummaryForJob(job, previewValue) {
-  const preview = previewValue || reminderPreviewForJob(job);
+  // 任务列表 / 手动预览不按重复间隔过滤，始终展示当前全部超期项。
+  const preview = previewValue || reminderPreviewForJob(job, { includeAll: true });
   const summary = reminderSummary(preview);
   // 当天已经发送过时预览可能为空，但仍要提示任务里尚未配置的企微 userid。
-  const coverage = preview.total > 0 ? preview : reminderPreviewForJob(Object.assign({}, job, { lastSent: {} }));
+  const coverage = preview.total > 0
+    ? preview
+    : reminderPreviewForJob(Object.assign({}, job, { lastSent: {} }), { includeAll: true });
   summary.mentionUnmappedCount = coverage.mentionUnmappedCount || 0;
   return summary;
 }
@@ -1496,7 +1502,7 @@ function reminderSummaryForJob(job, previewValue) {
 function reminderResponse(jobId) {
   const jobs = store.getReminderJobs();
   const entries = jobs.map((job) => {
-    const preview = reminderPreviewForJob(job);
+    const preview = reminderPreviewForJob(job, { includeAll: true });
     return {
       job,
       preview,
@@ -1507,7 +1513,7 @@ function reminderResponse(jobId) {
     ? entries.find((entry) => entry.job.id === String(jobId))
     : null) || entries[0] || null;
   const cfg = selected ? selected.job : store.getReminders();
-  const preview = selected ? selected.preview : reminderPreviewFor(cfg, {});
+  const preview = selected ? selected.preview : reminderPreviewFor(cfg, {}, { includeAll: true });
   return {
     jobs: entries.map((entry) => Object.assign(publicReminderJob(entry.job), {
       summary: entry.summary
@@ -1673,7 +1679,10 @@ async function runReminders(options) {
     throw error;
   }
   const cfg = job;
-  const fullPreview = reminderPreviewForJob(job);
+  // 手动发送不受重复提醒间隔影响，始终发送当前全部超期项；自动发送仍按间隔过滤。
+  const fullPreview = opts.trigger === 'auto'
+    ? reminderPreviewForJob(job)
+    : reminderPreviewForJob(job, { includeAll: true });
   const preview = filterReminderPreview(fullPreview, opts.accounts);
   if (opts.dryRun) {
     return Object.assign({ result: null }, reminderResponse(job.id), { preview: fullPreview });
@@ -2846,7 +2855,10 @@ async function handleApi(req, res, url) {
     if (body.thresholdDays != null) draft.thresholdDays = body.thresholdDays;
     if (body.repeatDays != null) draft.repeatDays = body.repeatDays;
     const previewConfig = normalizeReminderConfig(draft, base, { strict: true });
-    const preview = reminderPreviewFor(previewConfig, job ? job.lastSent : {});
+    const preview = reminderPreviewFor(previewConfig, job ? job.lastSent : {}, {
+      // 手动预览：忽略重复提醒间隔，展示当前全部超期项。
+      includeAll: body.includeAll === true
+    });
     sendJson(res, 200, { ok: true, data: { preview } });
     return;
   }
