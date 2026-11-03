@@ -1002,7 +1002,12 @@
     const tasks = state.tasks || [];
     const bugs = state.bugs || [];
     const doneTasks = tasks.filter((task) => task.completedAt && localDate(task.completedAt) === day);
-    const foundBugs = bugs.filter((bug) => localDate(bug.createdAt) === day);
+    // 日报「今日新增」与 Bug 跟踪保持一致：只统计当天由当前账号提交/新建的 Bug。
+    // 兼容没有 isMine 字段的旧本地数据与演示数据。
+    const hasOwnershipFlags = bugs.some((bug) => typeof bug.isMine === 'boolean');
+    const foundBugs = bugs.filter((bug) => (
+      (!hasOwnershipFlags || bug.isMine) && localDate(bug.createdAt) === day
+    ));
     const verifiedBugs = bugs.filter((bug) => bug.verifiedAt && localDate(bug.verifiedAt) === day);
     const closedBugs = bugs.filter((bug) => bug.closedAt && localDate(bug.closedAt) === day);
     const ongoingTasks = tasks.filter((task) => {

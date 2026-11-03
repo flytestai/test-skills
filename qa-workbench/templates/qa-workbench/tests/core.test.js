@@ -34,6 +34,22 @@ test('metrics 正确统计任务、Bug 和今日进度', () => {
   assert.ok(metrics.progress >= 0 && metrics.progress <= 100);
 });
 
+test('日报今日新增只统计我提交的 Bug，与 Bug 跟踪口径一致', () => {
+  const state = fixedState();
+  const mine = state.bugs.find((bug) => bug.id === 'BUG-1183');
+  const other = state.bugs.find((bug) => bug.id === 'BUG-1185');
+  state.bugs = [
+    Object.assign({}, mine, { isMine: true }),
+    Object.assign({}, other, { isMine: false })
+  ];
+  const data = Core.collectDailyData(state, FIXED_DATE);
+  assert.deepEqual(data.foundBugs.map((bug) => bug.id), ['BUG-1183']);
+  const report = Core.buildReport(state, FIXED_DATE);
+  assert.match(report.content.summary, /今日新增 1 个 Bug/);
+  assert.match(report.content.bugsSummary, /今日新增bug：1/);
+  assert.doesNotMatch(report.content.bugs, /BUG-1185/);
+});
+
 test('collectDailyData 和 buildReport 能采集并生成日报', () => {
   const state = fixedState();
   const data = Core.collectDailyData(state, FIXED_DATE);
