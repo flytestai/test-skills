@@ -269,6 +269,17 @@ test('autojob stats split unresolved, pending verification and closed', () => {
   assert.equal(stats.byProduct[0].key, '企微客户问题需求');
 });
 
+test('bug stats foundToday only counts Bugs opened by the current account', () => {
+  const now = new Date().toISOString();
+  const stats = buildBugStats([
+    bug({ id: 5301, openedBy: 'qa_user', openedDate: now }),
+    bug({ id: 5302, openedBy: 'dev01', openedDate: now }),
+    bug({ id: 5303, openedBy: 'qa_user', openedDate: '2026-10-24 10:00:00' })
+  ]);
+  assert.equal(stats.foundToday, 1);
+  assert.equal(stats.total, 3);
+});
+
 test('business category uses title feature prefixes before keywords', () => {
   assert.equal(businessCategory('【自选股】分组顺序异常', '自选股'), '自选股');
   assert.equal(businessCategory('【主窗口】启动崩溃', ''), '客户端体验');

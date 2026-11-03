@@ -434,7 +434,7 @@ function buildBugStats(items) {
     closed: bugs.filter((bug) => bug.status === 'closed').length,
     resolved: bugs.filter((bug) => bug.rawStatus === 'resolved').length,
     severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
-    foundToday: bugs.filter((bug) => localDate(bug.createdAt) === today).length,
+    foundToday: bugs.filter((bug) => bug.isMine && localDate(bug.createdAt) === today).length,
     byStatus,
     byRawStatus,
     bySeverity,

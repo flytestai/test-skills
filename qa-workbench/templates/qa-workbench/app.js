@@ -1441,7 +1441,8 @@
       closed: rows.filter((bug) => bug.status === 'closed').length,
       verifying: rows.filter((bug) => bugStatusLabel(bug) === '待验证').length,
       severeOpen: open.filter((bug) => bug.severity === 'P0' || bug.severity === 'P1').length,
-      foundToday: rows.filter((bug) => Core.localDate(bug.createdAt) === today).length,
+      // 今日新增只统计当天由当前账号提交/新建的 Bug，不随「指派给我」「全部 Bug」范围放大。
+      foundToday: rows.filter((bug) => bug.isMine && Core.localDate(bug.createdAt) === today).length,
       status: group((bug) => bugStatusLabel(bug)),
       severity: ['P0', 'P1', 'P2', 'P3'].map((key) => ({
         key,
@@ -1655,7 +1656,7 @@
         <article class="mini-metric"><span class="mini-metric-icon tint-red">${icon('bug')}</span><div><p>当前范围 Bug</p><strong>${stats.total} <small>个</small></strong></div></article>
         <article class="mini-metric"><span class="mini-metric-icon tint-orange">${icon('alert-triangle')}</span><div><p>未关闭 / P0–P1</p><strong>${stats.open} <small>个</small></strong><span class="mini-metric-sub">${stats.severeOpen} 个高优先级</span></div></article>
         <article class="mini-metric"><span class="mini-metric-icon tint-teal">${icon('check-circle')}</span><div><p>等待验证</p><strong>${stats.verifying} <small>个</small></strong></div></article>
-        <article class="mini-metric"><span class="mini-metric-icon tint-blue">${icon('activity')}</span><div><p>今日新增</p><strong>${stats.foundToday} <small>个</small></strong></div></article>
+        <article class="mini-metric" title="当天由我提交/新建的 Bug 数量"><span class="mini-metric-icon tint-blue">${icon('activity')}</span><div><p>今日新增</p><strong>${stats.foundToday} <small>个</small></strong><span class="mini-metric-sub">我提交的</span></div></article>
       </div>
       ${bugScopeRow()}
       <div class="page-toolbar">
