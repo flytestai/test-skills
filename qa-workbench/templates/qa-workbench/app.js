@@ -1082,6 +1082,11 @@
     return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw) ? raw.slice(0, 16) : '';
   }
 
+  function nowDateTimeInput() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  }
+
   async function saveRelease(key, patch, button, message) {
     if (!key) return;
     if (button) {
@@ -1104,6 +1109,98 @@
         delete button.dataset.busy;
       }
     }
+  }
+
+  function openReleaseModal() {
+    closeQuickMenu();
+    closeNotifications();
+    const defaultStart = nowDateTimeInput();
+    const html = `<div class="overlay">
+      <form class="modal modal-form" data-form="manual-release" novalidate>
+        <div class="modal-head">
+          <div class="modal-title-wrap">
+            <h2>手动创建版本</h2>
+            <p>手动创建的版本只保存在 QDesk 本机，不会写入禅道，也不会因为禅道同步而删除或被覆盖。</p>
+          </div>
+          <button class="icon-btn modal-close" type="button" data-action="close-modal" aria-label="关闭">${icon('close')}</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-grid">
+            ${field('版本号', `<input name="key" maxlength="64" placeholder="例如：3.0.2" autocomplete="off" autofocus required>`, { full: true, required: true, hint: '支持数字、字母、点、下划线和短横线。' })}
+            ${field('测试开始', `<input name="testStart" type="datetime-local" value="${esc(defaultStart)}">`, { hint: '默认当前时间，可调整。' })}
+            ${field('测试结束', `<input name="testEnd" type="datetime-local">`, { hint: '可选，不能早于开始时间。' })}
+            ${field('发版优先级', `<select name="priority" aria-label="发版优先级"><option value="">不设置</option><option value="P1">P1</option><option value="P2">P2</option><option value="P3">P3</option></select>`, { hint: '排序时置顶优先，其次按 P1 → P2 → P3。' })}
+            <label class="task-pin-check">
+              <input name="pinned" type="checkbox">
+              <span class="task-pin-check-icon">${icon('flag')}</span>
+              <span><strong>置顶该版本</strong><small>手动版本会固定显示在发版列表最前</small></span>
+            </label>
+          </div>
+          <div class="form-error" role="alert"></div>
+        </div>
+        <div class="modal-footer">
+          <span class="footer-left">${icon('database')}仅保存在 QDesk 本机</span>
+          <button class="btn" type="button" data-action="close-modal">取消</button>
+          <button class="btn btn-primary" type="submit">${icon('plus')}创建版本</button>
+        </div>
+      </form>
+    </div>`;
+
+    mountModal(html, {
+      onMount(root) {
+        const form = $('form[data-form="manual-release"]', root);
+        const submit = $('button[type="submit"]', form);
+        const submitLabel = submit.innerHTML;
+        const pinCheck = $('input[name="pinned"]', form);
+        const pinBox = $('.task-pin-check', form);
+        pinCheck.addEventListener('change', () => pinBox.classList.toggle('is-checked', pinCheck.checked));
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const data = new FormData(form);
+          const key = String(data.get('key') || '').trim();
+          const testStart = String(data.get('testStart') || '');
+          const testEnd = String(data.get('testEnd') || '');
+          if (!/^[0-9A-Za-z._-]{1,64}$/.test(key)) {
+            showFormError(form, '请填写有效的版本号，仅支持数字、字母、点、下划线和短横线。');
+            return;
+          }
+          if (testStart && testEnd && testEnd < testStart) {
+            showFormError(form, '测试结束时间不能早于开始时间。');
+            return;
+          }
+          submit.disabled = true;
+          submit.dataset.busy = '1';
+          submit.innerHTML = `<span class="spinner small"></span>创建中…`;
+          try {
+            const result = await apiRequest('/api/releases', {
+              method: 'POST',
+              body: {
+                key,
+                name: key,
+                testStart,
+                testEnd,
+                priority: String(data.get('priority') || ''),
+                pinned: pinCheck.checked,
+                manual: true
+              }
+            });
+            state.releasePlans = result.releasePlans && typeof result.releasePlans === 'object'
+              ? result.releasePlans
+              : state.releasePlans;
+            if (result.releases) state.releases = result.releases;
+            closeModal({ restoreFocus: false });
+            if (ui.view !== 'releases') navigate('releases');
+            else renderView(false);
+            showToast(`已手动创建版本 ${key}，仅保存在本机。`);
+          } catch (error) {
+            showFormError(form, error.message);
+            submit.disabled = false;
+            delete submit.dataset.busy;
+            submit.innerHTML = submitLabel;
+          }
+        });
+      }
+    });
   }
 
   function renderReleases() {
@@ -1129,8 +1226,8 @@
             <div class="release-card-title">
               <span class="release-icon">${icon(item.pinned ? 'flag' : 'layers')}</span>
               <div>
-                <h3>${esc(item.name)}${item.pinned ? '<span class="release-pinned-tag">置顶</span>' : ''}</h3>
-                <p>${esc(projectText)}${executionText ? `<span class="sep"></span>${esc(executionText)}` : ''}</p>
+                <h3>${esc(item.name)}${item.pinned ? '<span class="release-pinned-tag">置顶</span>' : ''}${item.manual ? '<span class="release-manual-tag">本地版本</span>' : ''}</h3>
+                <p>${esc(projectText)}${executionText ? `<span class="sep"></span>${esc(executionText)}` : ''}${item.manual ? '<span class="sep"></span>手动创建 · 不随禅道同步' : ''}</p>
               </div>
             </div>
             <div class="release-card-tools">
@@ -1208,8 +1305,9 @@
           <div><strong>${closed}</strong><span>已关闭</span></div>
         </div>
         <div class="release-hero-actions">
-          <button class="btn btn-primary" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新版本</button>
-          <span>刷新会重新同步任务、执行与 Bug 版本</span>
+          <button class="btn btn-primary" type="button" data-action="create-release">${icon('plus')}手动创建版本</button>
+          <button class="btn btn-ghost" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新版本</button>
+          <span>手动创建的版本只保存在本机，不随禅道同步；刷新会重新同步任务、执行与 Bug 版本</span>
         </div>
       </section>
 
@@ -1222,8 +1320,11 @@
         ${cards || `<div class="empty-state release-empty">
           <div class="empty-icon">${icon('layers')}</div>
           <h3>暂无可管理的版本</h3>
-          <p>请先从禅道同步任务与 Bug，版本会按执行和版本字段自动汇总。</p>
-          <button class="btn btn-primary btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button>
+          <p>可以从禅道同步任务与 Bug 自动汇总版本，也可以手动创建一个只保存在本机的版本。</p>
+          <div class="empty-actions">
+            <button class="btn btn-primary btn-sm" type="button" data-action="create-release">${icon('plus')}手动创建版本</button>
+            <button class="btn btn-soft btn-sm" type="button" data-action="sync-zentao">${icon('refresh')}从禅道刷新</button>
+          </div>
         </div>`}
       </div>
     `;
@@ -4862,6 +4963,7 @@
       return;
     }
     if (action === 'create-task') { closeQuickMenu(); closeNotifications(); openTaskModal(); return; }
+    if (action === 'create-release') { closeQuickMenu(); closeNotifications(); openReleaseModal(); return; }
     if (action === 'create-bug') { closeQuickMenu(); closeNotifications(); openBugModal(); return; }
     if (action === 'create-report') { closeQuickMenu(); closeNotifications(); generateReport(Core.workdayDate()); return; }
     if (action === 'report-generate') { generateReport(ui.reportDate); return; }

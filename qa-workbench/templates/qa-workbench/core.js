@@ -728,6 +728,7 @@
       const testEnd = typeof plan.testEnd === 'string' ? plan.testEnd : '';
       const closed = plan.closed === true;
       const pinned = plan.pinned === true;
+      const manual = plan.manual === true;
       const priority = RELEASE_PRIORITIES.includes(plan.priority) ? plan.priority : '';
       const startMs = testStart ? new Date(testStart).getTime() : 0;
       const endMs = testEnd ? new Date(testEnd).getTime() : 0;
@@ -757,6 +758,7 @@
         testEnd,
         closed,
         pinned,
+        manual,
         priority,
         status,
         planUpdatedAt: plan.updatedAt || ''
@@ -772,6 +774,7 @@
       || item.openBugs
       || item.myTaskOpen
       || item.pinned
+      || item.manual
       || item.priority
       || (item.latestEnd && item.latestEnd >= cutoff)
     ));

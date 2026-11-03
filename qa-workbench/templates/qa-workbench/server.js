@@ -2776,6 +2776,14 @@ async function handleApi(req, res, url) {
       return;
     }
     const body = await readJsonBody(req, 64 * 1024);
+    // 手动创建的版本只保存在本机，创建后不会因禅道同步而消失或被覆盖。
+    if (body.manual === true) {
+      const key = String(body.key == null ? '' : body.key).trim();
+      if (store.getReleasePlans()[key]) {
+        sendJson(res, 409, { ok: false, error: { message: `版本 ${key} 已存在，请直接编辑现有版本。` } });
+        return;
+      }
+    }
     const plan = store.updateReleasePlan(body);
     snapshotRevision += 1;
     refreshDailyReport();

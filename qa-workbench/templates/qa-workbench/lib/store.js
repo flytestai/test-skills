@@ -89,6 +89,8 @@ function normalizeReleasePlan(raw, existing) {
   const closed = closedInput === true || closedInput === 1 || closedInput === '1' || closedInput === 'true';
   const pinnedInput = input.pinned != null ? input.pinned : base.pinned;
   const pinned = pinnedInput === true || pinnedInput === 1 || pinnedInput === '1' || pinnedInput === 'true';
+  const manualInput = input.manual != null ? input.manual : base.manual;
+  const manual = manualInput === true || manualInput === 1 || manualInput === '1' || manualInput === 'true';
   const priorityInput = String(input.priority != null ? input.priority : base.priority || '').trim().toUpperCase();
   if (priorityInput && !RELEASE_PRIORITIES.includes(priorityInput)) {
     const error = new Error('发版优先级无效，请选择 P1、P2 或 P3。');
@@ -102,6 +104,7 @@ function normalizeReleasePlan(raw, existing) {
     testEnd,
     closed,
     pinned,
+    manual,
     priority: priorityInput,
     updatedAt: new Date().toISOString()
   };
@@ -531,7 +534,7 @@ class Store {
     const key = normalizeReleaseKey(input.key);
     const existing = this.data.releasePlans[key] || null;
     const plan = normalizeReleasePlan(input, existing);
-    if (!plan.testStart && !plan.testEnd && !plan.closed && !plan.pinned && !plan.priority) {
+    if (!plan.manual && !plan.testStart && !plan.testEnd && !plan.closed && !plan.pinned && !plan.priority) {
       delete this.data.releasePlans[key];
       this.save();
       return Object.assign({}, plan, { removed: true });

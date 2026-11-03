@@ -319,6 +319,34 @@ test('Store persists release test windows and rejects invalid ranges', () => {
   });
 });
 
+test('Store keeps manually created release versions after reload', () => {
+  withTempStore((store, file) => {
+    const manual = store.updateReleasePlan({
+      key: '3.0.2',
+      name: '3.0.2',
+      testStart: '2026-11-03T14:00',
+      manual: true
+    });
+    assert.equal(manual.manual, true);
+    assert.equal(manual.testStart, '2026-11-03T14:00');
+
+    const reloaded = new Store(file);
+    assert.equal(reloaded.getReleasePlans()['3.0.2'].manual, true);
+    assert.equal(reloaded.getReleasePlans()['3.0.2'].testStart, '2026-11-03T14:00');
+
+    const updated = reloaded.updateReleasePlan({
+      key: '3.0.2',
+      testStart: '',
+      testEnd: '',
+      closed: false,
+      pinned: false,
+      priority: ''
+    });
+    assert.equal(updated.manual, true);
+    assert.ok(new Store(file).getReleasePlans()['3.0.2']);
+  });
+});
+
 test('Store creates, updates and deletes local tasks', () => {
   withTempStore((store, file) => {
     const task = store.createLocalTask({

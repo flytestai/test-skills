@@ -9479,6 +9479,15 @@ kbd {
   background: #f2f5ff;
 }
 
+.release-hero-actions .btn-ghost {
+  color: #dbe3ff;
+}
+
+.release-hero-actions .btn-ghost:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+
 .release-hero-actions > span {
   color: #aab8e2;
   font-size: 10.5px;
@@ -10157,6 +10166,19 @@ kbd {
   border-radius: 999px;
   color: var(--primary-deep);
   background: var(--primary-soft);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  vertical-align: 1px;
+}
+
+.release-manual-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: #8a5a12;
+  background: #fff1d6;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0;

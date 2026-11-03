@@ -750,6 +750,23 @@ test('releaseCatalog 从执行与 Bug 版本汇总版本，并合并本地测试
   assert.equal(closed[0].pendingBugs, 1);
 });
 
+test('releaseCatalog 展示仅存在于本机的手动版本，并标记 manual', () => {
+  const releases = Core.releaseCatalog({ tasks: [], bugs: [] }, {
+    '3.0.2': { key: '3.0.2', name: '3.0.2', manual: true, testStart: '2099-01-01T09:00' }
+  });
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].key, '3.0.2');
+  assert.equal(releases[0].manual, true);
+  assert.equal(releases[0].status, 'upcoming');
+
+  const unplanned = Core.releaseCatalog({ tasks: [], bugs: [] }, {
+    '3.0.3': { key: '3.0.3', name: '3.0.3', manual: true }
+  });
+  assert.equal(unplanned.length, 1);
+  assert.equal(unplanned[0].manual, true);
+  assert.equal(unplanned[0].status, 'unplanned');
+});
+
 test('releaseCatalog 置顶优先，其次按 P1、P2、P3 排序', () => {
   const state = {
     bugs: [
