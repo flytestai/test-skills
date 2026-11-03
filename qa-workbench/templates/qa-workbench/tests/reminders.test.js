@@ -452,6 +452,21 @@ test('buildReminderPreview 按状态提醒产品确认、开发修复和测试�
   assert.match(tester.message, /你有 1 个 Bug 已超过8天未处理，最长 8 天未处理！\n其中 1 个 Bug 待测试，请及时验证并更新禅道状态。/);
 });
 
+test('未确认 Bug 的产品没有配置 PO 时不会错误提醒开发', () => {
+  const config = Reminders.normalizeReminderConfig({ thresholdDays: 7 }, null, { strict: true });
+  const preview = Reminders.buildReminderPreview({
+    account: ACCOUNT,
+    config,
+    now: NOW,
+    products: [{ id: '52', name: '新好人好股PC客户端', po: '', poName: '', qd: '', qdName: '' }],
+    bugs: [
+      bug({ id: 'U3', productId: '52', assigneeAccount: 'suntao', assignee: '孙涛', confirmed: false, createdAt: daysAgo(14) })
+    ]
+  });
+  assert.equal(preview.total, 0);
+  assert.equal(preview.groups.length, 0);
+});
+
 test('buildReminderPreview 已修复待验证时优先提醒实际验证人', () => {
   const config = Reminders.normalizeReminderConfig({ thresholdDays: 3 }, null, { strict: true });
   const preview = Reminders.buildReminderPreview({

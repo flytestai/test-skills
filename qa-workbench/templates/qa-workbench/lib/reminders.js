@@ -445,9 +445,9 @@ function resolveReminderTarget(bug, productMap, account) {
       if (owner) return owner;
       return null;
     }
-    if (!bug.confirmed) {
-      const owner = productOwnerTarget(bug, productMap, 'unconfirmed');
-      if (owner) return owner;
+    if (bug.confirmed === false) {
+      // 未确认的 Bug 归属产品；产品未配置 PO 时宁可跳过，也不能错误地艾特开发。
+      return productOwnerTarget(bug, productMap, 'unconfirmed');
     }
     return {
       role: 'developer',
