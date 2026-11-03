@@ -149,12 +149,12 @@ function acquireCliSlot() {
 }
 
 function releaseCliSlot() {
-  const next = cliWaiters.shift();
-  if (next) {
-    next();
-    return;
-  }
   activeCliCalls = Math.max(0, activeCliCalls - 1);
+  while (cliWaiters.length && activeCliCalls < cliConcurrencyValue) {
+    const next = cliWaiters.shift();
+    activeCliCalls += 1;
+    next();
+  }
 }
 
 function isConfigWriteRace(error) {
