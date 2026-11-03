@@ -60,7 +60,7 @@ test('selectTaskExecutions 跳过明显无任务的历史迭代，保留活跃�
     { id: '3', status: 'wait', end: '2099-01-01', totalEstimate: '0', totalConsumed: '0', totalLeft: '0' },
     { id: '4', status: 'wait', end: '2020-01-01', totalEstimate: '10', totalConsumed: '0', totalLeft: '10' }
   ];
-  assert.deepEqual(selectTaskExecutions(rows).map((row) => row.id), ['1', '3', '4']);
+  assert.deepEqual(selectTaskExecutions(rows).map((row) => row.id), ['1', '3']);
 });
 
 test('syncIntervalMinutes 0 falls back to the legacy fixed sync times', () => {

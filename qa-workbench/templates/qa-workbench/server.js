@@ -245,6 +245,7 @@ const caches = {
 // 单次禅道 CLI 查询上限。单个产品或执行超时不会拖垮整轮同步。
 const ZENTAO_FOUNDATION_TIMEOUT_MS = 60000;
 const ZENTAO_QUERY_TIMEOUT_MS = 45000;
+const TASK_QUERY_TIMEOUT_MS = 20000;
 const AUTOJOB_QUERY_TIMEOUT_MS = 30000;
 const AUTOJOB_FULL_SWEEP_MS = 6 * 60 * 60 * 1000;
 const TASK_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -763,11 +764,12 @@ function selectTaskExecutions(executionRows) {
     ...((snapshot && snapshot.reminderTasks) || [])
   ].map((task) => String(task.executionId || '')).filter(Boolean));
   const recentCutoff = Core.addDays(Core.localDate(), -90);
+  // 只扫描进行中、近期结束或历史上确实出现过任务/提醒的迭代。
+  // 多年前的迭代即使有工时，也几乎不会出现新的“我的任务”，逐个查询只会制造超时。
   const selected = executionRows.filter((exec) => {
     const id = String(exec.id);
     if (previousExecutionIds.has(id)) return true;
     if (String(exec.status) === 'doing') return true;
-    if (Number(exec.totalEstimate) > 0 || Number(exec.totalConsumed) > 0 || Number(exec.totalLeft) > 0) return true;
     return Boolean(exec.end && exec.end >= recentCutoff);
   });
   // 首次同步或历史数据缺失时回退到全量，避免漏掉刚分配的任务。
@@ -784,7 +786,7 @@ async function loadExecutionTasks(exec, force) {
     const result = await listTasks(exec.id, {
       ...cliOptions,
       browseType: 'unclosed',
-      timeoutMs: ZENTAO_QUERY_TIMEOUT_MS
+      timeoutMs: TASK_QUERY_TIMEOUT_MS
     });
     const tasks = result.items || [];
     taskExecutionCache.set(key, { at: Date.now(), tasks });
