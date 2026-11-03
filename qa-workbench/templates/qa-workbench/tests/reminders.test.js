@@ -452,6 +452,28 @@ test('buildReminderPreview 按状态提醒产品确认、开发修复和测试�
   assert.match(tester.message, /你有 1 个 Bug 已超过8天未处理，最长 8 天未处理！\n其中 1 个 Bug 待测试，请及时验证并更新禅道状态。/);
 });
 
+test('buildReminderPreview 已修复待验证时优先提醒实际验证人', () => {
+  const config = Reminders.normalizeReminderConfig({ thresholdDays: 3 }, null, { strict: true });
+  const preview = Reminders.buildReminderPreview({
+    account: ACCOUNT,
+    config,
+    now: NOW,
+    products: [{ id: '52', name: '新好人好股PC客户端', po: 'anlaigen', poName: '安来根', qd: '', qdName: '' }],
+    bugs: [
+      bug({
+        id: 'T2', productId: '52', rawStatus: 'resolved', status: 'verifying',
+        assigneeAccount: 'fengzhizheng', assignee: '冯智政', confirmed: true,
+        needsMyVerification: true, createdAt: daysAgo(9), resolvedAt: daysAgo(5)
+      })
+    ]
+  });
+  assert.equal(preview.groups.length, 1);
+  const tester = preview.groups[0];
+  assert.equal(tester.account, ACCOUNT);
+  assert.equal(tester.reasonCounts.tester, 1);
+  assert.match(tester.message, /你有 1 个 Bug 已超过5天未处理，最长 5 天未处理！\n其中 1 个 Bug 待测试，请及时验证并更新禅道状态。/);
+});
+
 test('buildReminderPreview 按开发分组并生成简短的版本、数量和最长未处理天数摘要', () => {
   const config = Reminders.normalizeReminderConfig({
     thresholdDays: 3,

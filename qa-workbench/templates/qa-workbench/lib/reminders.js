@@ -420,6 +420,16 @@ function resolveReminderTarget(bug, productMap, account) {
   const product = productMap.get(String(bug.productId || '')) || {};
   if (rawStatus === 'resolved') {
     const qd = String(product.qd || '').trim();
+    // 已解决且等待当前账号验证时，验证人就是当前账号（通常是提交人），
+    // 不能因为禅道把 assignedTo 暂时留在开发或其他产品名下而提醒错人。
+    if (bug.needsMyVerification === true && account) {
+      return {
+        role: 'tester',
+        reason: 'tester',
+        account,
+        name: String(bug.reporter || account).trim() || account
+      };
+    }
     const targetAccount = assignee || qd || reporter;
     if (!targetAccount) return null;
     return {
