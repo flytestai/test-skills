@@ -359,6 +359,22 @@ test('buildReminderPreview 手动预览忽略重复间隔，包含全部超期�
   assert.match(preview.groups[0].message, /你有 3 个 Bug 已超过3天未处理，最长 12 天未处理！/);
 });
 
+test('buildReminderPreview 消息中的已超过天数跟随任务阈值实时变化', () => {
+  [3, 5, 7].forEach((thresholdDays) => {
+    const config = Reminders.normalizeReminderConfig({ thresholdDays }, null, { strict: true });
+    const preview = Reminders.buildReminderPreview({
+      account: ACCOUNT,
+      config,
+      now: NOW,
+      bugs: [bug({ id: '1', assignedAt: daysAgo(18) })]
+    });
+    assert.match(
+      preview.groups[0].message,
+      new RegExp(`你有 1 个 Bug 已超过${thresholdDays}天未处理，最长 18 天未处理！`)
+    );
+  });
+});
+
 test('publicReminderConfig 不回传 Webhook 密钥', () => {
   const config = Reminders.normalizeReminderConfig({ enabled: true, webhookUrl: WEBHOOK }, null, { strict: true });
   const publicConfig = Reminders.publicReminderConfig(config);
