@@ -46,7 +46,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - 密码
 - 显示姓名（可选）
 
-点「测试连接」可先验证账号，并查看可访问的产品数与项目数；点「保存并同步」后开始后台同步。首次同步会遍历账号可访问的全部产品与执行，数据量大时可能需要几十秒；完成后页面自动更新，无需刷新。
+点「测试连接」可先验证账号，并查看可访问的产品数与项目数；点「保存并同步」后开始后台同步。首次同步会遍历账号可访问的全部产品与执行，数据量大时可能需要几十秒；后续自动同步只复查活跃、近期或历史上出现过任务的执行，并复用基础数据缓存，通常能在半分钟内完成。同步期间页面照常使用本地快照，完成后自动更新，无需刷新。
 
 如果只使用本机 CLI Profile，请把 `config.json` 中的 `tester.account` 设为 CLI 登录账号，或设置环境变量 `ZENTAO_ACCOUNT`。
 
@@ -179,12 +179,15 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 
 一次完整同步会：
 
-1. 读取全部可访问产品。
-2. 读取全部项目与执行，并保留属于可访问项目的执行。
-3. 对每个产品分别查询 `openedbyme` 与 `assignedtome` 的 Bug，按 ID 去重合并。
-4. 并行扫描 `watch.autojobAccounts` 创建的 Bug（默认 `autojob`），筛选出指派给我、由我解决或由我关闭的记录；该扫描结果缓存 15 分钟。
-5. 对每个执行查询任务：`assignedTo` 为当前账号的任务进入任务列表；`openedBy` 为当前账号、`assignedTo` 为其他开发且未完成的任务单独进入 `reminderTasks`，只用于定时提醒，不进入任务列表、看板和统计。
-6. 生成按产品分组的 Bug 统计、按项目分组的任务统计、客服反馈统计和超期提醒预览。
+1. 读取全部可访问产品、项目与执行；产品 / 项目 / 执行列表分别缓存 2 小时 / 2 小时 / 1 小时，用户姓名映射缓存 6 小时，避免每轮重复启动 CLI。
+2. 对每个产品分别查询 `openedbyme` 与 `assignedtome` 的 Bug，按 ID 去重合并；每页 1000 条，单个查询 45 秒超时。
+3. 并行扫描 `watch.autojobAccounts` 创建的 Bug（默认 `autojob`），筛选出指派给我、由我解决或由我关闭的记录。常规同步只复查历史上有客服反馈的产品，每 6 小时的后台巡检才做一次全产品扫描；结果缓存 30 分钟，单个产品 30 秒超时。
+4. 查询任务时只扫描可能存在任务的执行：历史快照中出现过的执行、进行中的执行、有工时或近期结束的执行；手动全量同步也复用同一筛选，不再逐个扫完所有历史迭代。未关闭任务每页 1000 条，结果缓存 5 分钟。
+5. Bug、任务和客服反馈三组读取完全并行。所有 CLI 查询共享一个全局并发上限：增量同步 8 个，手动全量降到 4 个，避免连续查询触发禅道限流；基础信息最多等待 60 秒。单个产品或执行失败不会阻塞整轮同步，会优先沿用上次数据并在同步警告中说明；迭代列表或单个迭代读取失败时，任务页保留上次结果，不会被清空。
+6. `assignedTo` 为当前账号的任务进入任务列表；`openedBy` 为当前账号、`assignedTo` 为其他开发且未完成的任务单独进入 `reminderTasks`，只用于定时提醒，不进入任务列表、看板和统计。
+7. 生成按产品分组的 Bug 统计、按项目分组的任务统计、客服反馈统计和超期提醒预览。
+
+同步状态中的 `sync.timings` 会记录「基础信息 / 数据读取 / 组装」三段耗时，`sync.counts.taskExecutions` 与 `sync.counts.autojobProducts` 记录本轮实际扫描的执行和产品数量，可在「配置 → 同步任务」中直接查看，便于定位变慢的环节。自动定时同步使用常规增量路径；「立即同步」才会强制全量刷新。
 
 ## 配置
 
@@ -222,6 +225,7 @@ Windows 也可以双击 `start.bat`；macOS / Linux / Git Bash 可执行 `./star
 - `QDESK_SYNC_WINDOW`（同步时间窗，格式 `08:30-18:00`）
 - `QDESK_SYNC_WORKDAYS`（逗号分隔的星期，默认 `1,2,3,4,5`）
 - `QDESK_SYNC_TIMES`（旧版固定同步时间，仅当间隔为 `0` 时生效）
+- `QDESK_CLI_CONCURRENCY`（覆盖禅道 CLI 并发上限；默认增量 8 / 手动全量 4，范围 1–12）
 
 ## Windows 开机自启
 
@@ -249,7 +253,7 @@ powershell -ExecutionPolicy Bypass -File .\uninstall-autostart.ps1
 | POST | `/api/zentao/connection` | 保存连接并启动后台同步 |
 | GET | `/api/zentao/file/:id` | 代理读取禅道图片 / 附件（仅图片格式，凭证不出本机） |
 | GET | `/api/bootstrap` | 立即返回本地快照；`?meta=1` 返回同步状态；`?refresh=1` 触发后台刷新 |
-| POST | `/api/sync` | 发起后台同步，返回 `202` |
+| POST | `/api/sync` | 发起后台同步，返回 `202`；`?force=0` 使用增量快路径（默认强制刷新基础数据） |
 | GET | `/api/bugs?scope=opened\|assigned\|autojob\|all` | Bug 列表与统计 |
 | POST | `/api/bugs` | 创建正式 Bug |
 | POST | `/api/bugs/:id/refresh` | 只读取并刷新这一条 Bug，不触发全量同步 |

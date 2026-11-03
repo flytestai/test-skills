@@ -8,6 +8,7 @@ const path = require('node:path');
 const {
   ZentaoError,
   runJson,
+  setCliConcurrency,
   getVersion,
   listProducts,
   listProjects,
@@ -233,19 +234,31 @@ const fileTokenCache = {
 };
 
 const caches = {
-  version: { at: 0, ttl: 10 * 60 * 1000, value: null },
-  users: { at: 0, ttl: 60 * 60 * 1000, value: null },
-  products: { at: 0, ttl: 10 * 60 * 1000, value: null },
-  projects: { at: 0, ttl: 10 * 60 * 1000, value: null },
-  executions: { at: 0, ttl: 10 * 60 * 1000, value: null },
-  autojob: { at: 0, ttl: 15 * 60 * 1000, value: null }
+  version: { at: 0, ttl: 60 * 60 * 1000, value: null },
+  users: { at: 0, ttl: 6 * 60 * 60 * 1000, value: null },
+  products: { at: 0, ttl: 2 * 60 * 60 * 1000, value: null },
+  projects: { at: 0, ttl: 2 * 60 * 60 * 1000, value: null },
+  executions: { at: 0, ttl: 60 * 60 * 1000, value: null },
+  autojob: { at: 0, ttl: 30 * 60 * 1000, value: null }
 };
+
+// 单次禅道 CLI 查询上限。单个产品或执行超时不会拖垮整轮同步。
+const ZENTAO_FOUNDATION_TIMEOUT_MS = 60000;
+const ZENTAO_QUERY_TIMEOUT_MS = 45000;
+const AUTOJOB_QUERY_TIMEOUT_MS = 30000;
+const AUTOJOB_FULL_SWEEP_MS = 6 * 60 * 60 * 1000;
+const TASK_CACHE_TTL_MS = 5 * 60 * 1000;
+const taskExecutionCache = new Map();
+const autojobProductCache = new Map();
+let lastAutojobFullSweepAt = 0;
 
 let snapshot = null;
 let snapshotAt = 0;
 let snapshotRevision = 0;
 let snapshotInflight = null;
 let snapshotEpoch = 0;
+const recentBugMutations = new Map();
+let replayingBugMutations = false;
 let lastConnectionError = '';
 let lastConnectionErrorCode = '';
 let syncStartedAt = 0;
@@ -351,6 +364,8 @@ function loadSnapshotCache() {
   const savedAt = new Date(cachedSnapshot.savedAt || cachedSnapshot.snapshot.generatedAt || 0).getTime();
   snapshotAt = Number.isFinite(savedAt) ? savedAt : 0;
   snapshotRevision = Number(cachedSnapshot.revision) || 1;
+  const autojobAt = new Date((snapshot.autojob && snapshot.autojob.scannedAt) || 0).getTime();
+  if (Number.isFinite(autojobAt) && autojobAt > 0) lastAutojobFullSweepAt = autojobAt;
   lastConnectionError = '';
   return true;
 }
@@ -406,58 +421,117 @@ function primaryProductId(products) {
   return ids[0] || String(config.zentao.productId || '');
 }
 
+function previousAutojobItems() {
+  const info = (snapshot && snapshot.autojob) || {};
+  const map = new Map();
+  [...(info.bugs || []), ...(info.dailyBugs || [])].forEach((bug) => {
+    if (!bug || bug.id == null) return;
+    const copy = { ...bug };
+    delete copy.autojobRelation;
+    map.set(String(copy.id), copy);
+  });
+  if (caches.autojob.value && Array.isArray(caches.autojob.value.items)) {
+    caches.autojob.value.items.forEach((bug) => {
+      if (bug && bug.id != null) map.set(String(bug.id), bug);
+    });
+  }
+  return Array.from(map.values());
+}
+
+function selectAutojobProducts(products, force) {
+  const rows = products || [];
+  const wanted = new Set(config.watch.productIds || []);
+  if (wanted.size) {
+    return { selected: rows.filter((product) => wanted.has(String(product.id))), fullSweep: false };
+  }
+  const previousIds = new Set(previousAutojobItems().map((bug) => String(bug.productId || '')));
+  // 手动同步不触发全产品客服反馈扫描；只有首次同步或每 6 小时的后台巡检才全量发现新产品。
+  const fullSweep = !previousIds.size
+    || !lastAutojobFullSweepAt
+    || Date.now() - lastAutojobFullSweepAt >= AUTOJOB_FULL_SWEEP_MS;
+  if (fullSweep) {
+    lastAutojobFullSweepAt = Date.now();
+    return { selected: rows, fullSweep: true };
+  }
+  // 常规同步只复查历史上有客服反馈的产品，新产品的完整发现每 6 小时做一次。
+  const selected = rows.filter((product) => previousIds.has(String(product.id)));
+  return { selected: selected.length ? selected : rows, fullSweep: false };
+}
+
 async function loadAutojobBugs(products, users, webUrl, moduleNames, force) {
   const configured = Array.from(new Set(config.watch.autojobAccounts || []));
-  const known = configured.filter((account) => users.has(account));
+  // 用户姓名映射失败时不能把客服反馈整组丢弃；账号配置本身已经足够筛选 openedBy。
+  const known = users.size ? configured.filter((account) => users.has(account)) : configured;
   if (!config.watch.enabled || !known.length) {
     return { enabled: false, accounts: known, items: [], warnings: [], scannedProducts: 0 };
   }
   const accountSet = new Set(known);
-  const wanted = new Set(config.watch.productIds || []);
-  const selected = wanted.size
-    ? (products || []).filter((product) => wanted.has(String(product.id)))
-    : (products || []);
+  const warnings = [];
+  const previousItems = previousAutojobItems();
+  const previousMap = new Map(previousItems.map((bug) => [String(bug.id), bug]));
+  const { selected, fullSweep } = selectAutojobProducts(products, force);
+  const selectedIds = new Set(selected.map((product) => String(product.id)));
 
-  return cached(caches.autojob, force, async () => {
-    const warnings = [];
-    const bundles = await mapLimit(selected, 2, async (product) => {
-      try {
-        const result = await listBugs(product.id, {
-          ...cliOptions,
-          browseType: 'all',
-          perPage: 1000,
-          maxPages: 20
-        });
-        const bugs = (result.items || [])
-          .filter((raw) => raw && accountSet.has(String(raw.openedBy || '')))
-          .map((raw) => normalizeBug(raw, {
-            users,
-            account: config.tester.account,
-            productId: product.id,
-            productName: product.name,
-            moduleNames,
-            webUrl,
-            autojobAccounts: accountSet
-          }));
-        return { bugs };
-      } catch (error) {
-        warnings.push(`产品「${product.name}」客服反馈扫描失败：${error.message}`);
-        return { bugs: [] };
+  const bundles = await mapLimit(selected, 4, async (product) => {
+    const cacheKey = String(product.id);
+    const cachedEntry = autojobProductCache.get(cacheKey);
+    if (!force && cachedEntry && Date.now() - cachedEntry.at < caches.autojob.ttl) {
+      return { bugs: cachedEntry.bugs };
+    }
+    try {
+      const result = await listBugs(product.id, {
+        ...cliOptions,
+        browseType: 'all',
+        perPage: 1000,
+        maxPages: 20,
+        timeoutMs: AUTOJOB_QUERY_TIMEOUT_MS
+      });
+      const bugs = (result.items || [])
+        .filter((raw) => raw && accountSet.has(String(raw.openedBy || '')))
+        .map((raw) => normalizeBug(raw, {
+          users,
+          account: config.tester.account,
+          productId: product.id,
+          productName: product.name,
+          moduleNames,
+          webUrl,
+          autojobAccounts: accountSet
+        }));
+      autojobProductCache.set(cacheKey, { at: Date.now(), bugs });
+      return { bugs };
+    } catch (error) {
+      if (cachedEntry) {
+        warnings.push(`产品「${product.name}」客服反馈刷新失败，已沿用上次结果：${error.message}`);
+        return { bugs: cachedEntry.bugs };
       }
-    });
-    const deduped = new Map();
-    bundles.forEach((bundle) => {
-      bundle.bugs.forEach((bug) => deduped.set(String(bug.id), bug));
-    });
-    return {
-      enabled: true,
-      accounts: known,
-      items: Array.from(deduped.values()),
-      warnings,
-      scannedProducts: selected.length,
-      scannedAt: new Date().toISOString()
-    };
+      warnings.push(`产品「${product.name}」客服反馈扫描失败：${error.message}`);
+      return { bugs: previousItems.filter((bug) => String(bug.productId) === cacheKey) };
+    }
   });
+
+  const deduped = new Map(previousMap);
+  // 未参与本轮扫描的产品继续沿用已有结果，避免切换扫描范围时数据突然消失。
+  selectedIds.forEach((id) => {
+    previousItems.forEach((bug) => {
+      if (String(bug.productId) === id) deduped.delete(String(bug.id));
+    });
+  });
+  bundles.forEach((bundle) => {
+    bundle.bugs.forEach((bug) => deduped.set(String(bug.id), bug));
+  });
+
+  const result = {
+    enabled: true,
+    accounts: known,
+    items: Array.from(deduped.values()),
+    warnings,
+    scannedProducts: selected.length,
+    fullSweep,
+    scannedAt: new Date().toISOString()
+  };
+  caches.autojob.value = result;
+  caches.autojob.at = Date.now();
+  return result;
 }
 
 function sortAutojobBugs(rows) {
@@ -545,7 +619,6 @@ function rebuildSnapshotState(bugs, autojobItems) {
   const previousCounts = (snapshot.sync && snapshot.sync.counts) || {};
   const now = new Date().toISOString();
 
-  snapshotEpoch += 1;
   snapshot.bugs = rows;
   snapshot.products = groups;
   snapshot.bugStats = buildBugStats(rows);
@@ -611,6 +684,9 @@ function applyBugToSnapshot(bug) {
   const bugs = (snapshot.bugs || []).filter((row) => String(row.id) !== bugId);
   if (belongs) bugs.push(bug);
   rebuildSnapshotState(bugs, items);
+  if (!replayingBugMutations) {
+    recentBugMutations.set(bugId, { at: Date.now(), bug: { ...bug } });
+  }
   refreshDailyReport();
   return true;
 }
@@ -623,6 +699,9 @@ function removeBugFromSnapshot(bugId) {
   if (itemIndex >= 0) items.splice(itemIndex, 1);
   const bugs = (snapshot.bugs || []).filter((row) => String(row.id) !== id);
   rebuildSnapshotState(bugs, items);
+  if (!replayingBugMutations) {
+    recentBugMutations.set(id, { at: Date.now(), deleted: true });
+  }
   refreshDailyReport();
   return true;
 }
@@ -678,27 +757,85 @@ async function refreshSnapshotBug(bugId, expectedStatus) {
   return applyRawBugToSnapshot(raw, bugId);
 }
 
+function selectTaskExecutions(executionRows) {
+  const previousExecutionIds = new Set([
+    ...((snapshot && snapshot.tasks) || []),
+    ...((snapshot && snapshot.reminderTasks) || [])
+  ].map((task) => String(task.executionId || '')).filter(Boolean));
+  const recentCutoff = Core.addDays(Core.localDate(), -90);
+  const selected = executionRows.filter((exec) => {
+    const id = String(exec.id);
+    if (previousExecutionIds.has(id)) return true;
+    if (String(exec.status) === 'doing') return true;
+    if (Number(exec.totalEstimate) > 0 || Number(exec.totalConsumed) > 0 || Number(exec.totalLeft) > 0) return true;
+    return Boolean(exec.end && exec.end >= recentCutoff);
+  });
+  // 首次同步或历史数据缺失时回退到全量，避免漏掉刚分配的任务。
+  return selected.length ? selected : executionRows;
+}
+
+async function loadExecutionTasks(exec, force) {
+  const key = String(exec.id);
+  const cachedEntry = taskExecutionCache.get(key);
+  if (!force && cachedEntry && Date.now() - cachedEntry.at < TASK_CACHE_TTL_MS) {
+    return { exec, tasks: cachedEntry.tasks, fromCache: true };
+  }
+  try {
+    const result = await listTasks(exec.id, {
+      ...cliOptions,
+      browseType: 'unclosed',
+      timeoutMs: ZENTAO_QUERY_TIMEOUT_MS
+    });
+    const tasks = result.items || [];
+    taskExecutionCache.set(key, { at: Date.now(), tasks });
+    return { exec, tasks, fromCache: false };
+  } catch (error) {
+    if (cachedEntry) {
+      return { exec, tasks: cachedEntry.tasks, fromCache: true, error };
+    }
+    throw error;
+  }
+}
+
 async function buildSnapshot(force) {
   const start = Date.now();
+  setCliConcurrency(force ? 4 : 8);
   const warnings = [];
+  let executionsFailed = false;
+  const foundationOptions = { ...cliOptions, timeoutMs: ZENTAO_FOUNDATION_TIMEOUT_MS };
   const [version, usersResult, productsResult, projectsResult, executionsResult] = await Promise.all([
-    cached(caches.version, force, () => getVersion(cliOptions)).catch(() => ({ cli: 'zentao-cli', server: '' })),
-    cached(caches.users, force, () => listUsers(cliOptions)).catch((error) => {
+    cached(caches.version, force, () => getVersion(foundationOptions)).catch(() => ({ cli: 'zentao-cli', server: '' })),
+    cached(caches.users, force, () => listUsers(foundationOptions)).catch((error) => {
       warnings.push(`用户姓名映射加载失败：${error.message}`);
       return { items: [] };
     }),
-    cached(caches.products, force, () => listProducts(cliOptions)),
-    cached(caches.projects, force, () => listProjects(cliOptions)).catch((error) => {
+    cached(caches.products, force, () => listProducts(foundationOptions)).catch((error) => {
+      warnings.push(`产品列表加载失败：${error.message}`);
+      const previous = ((snapshot && snapshot.products) || []).map((product) => ({
+        id: String(product.id),
+        name: String(product.name || ''),
+        status: String(product.status || '')
+      }));
+      if (previous.length) warnings.push(`已沿用上次读取的 ${previous.length} 个产品。`);
+      return { items: previous };
+    }),
+    cached(caches.projects, force, () => listProjects(foundationOptions)).catch((error) => {
       warnings.push(`项目列表加载失败：${error.message}`);
       return { items: [] };
     }),
-    cached(caches.executions, force, () => listExecutions(cliOptions)).catch((error) => {
+    cached(caches.executions, force, () => listExecutions(foundationOptions)).catch((error) => {
       warnings.push(`迭代列表加载失败：${error.message}`);
+      executionsFailed = true;
       return { items: [] };
     })
   ]);
 
   const users = userMap(usersResult.items || []);
+  if (!users.size && snapshot && snapshot.meta && Array.isArray(snapshot.meta.users)) {
+    snapshot.meta.users.forEach((user) => {
+      if (user && user.account) users.set(String(user.account), String(user.name || user.account));
+    });
+  }
   const testerName = users.get(config.tester.account) || config.tester.name || config.tester.account || '测试工程师';
   const webUrl = version && version.server ? String(version.server) : '';
   const moduleNames = config.zentao.moduleNames || {};
@@ -721,42 +858,87 @@ async function buildSnapshot(force) {
     !accessibleProjectIds.size || accessibleProjectIds.has(String(exec.project))
   ));
 
+  const foundationMs = Date.now() - start;
   const autojobAccountSet = new Set(config.watch.autojobAccounts || []);
-  const [bugBundles, autojobResult] = await Promise.all([
-    mapLimit(productRows, 3, async (product) => {
+  const previousBugs = (snapshot && snapshot.bugs) || [];
+  const previousTasks = (snapshot && snapshot.tasks) || [];
+  const previousReminderTasks = (snapshot && snapshot.reminderTasks) || [];
+  const taskExecutions = selectTaskExecutions(executionRows);
+  const dataStart = Date.now();
+  const taskWarnings = [];
+  const failedExecutionIds = new Set();
+
+  // Bug、任务与客服反馈并行读取：任何一组变慢都不会串行阻塞其他数据。
+  const [bugBundles, autojobResult, taskBundles] = await Promise.all([
+    mapLimit(productRows, 6, async (product) => {
       const bundleWarnings = [];
-      const read = (browseType) => listBugs(product.id, {
-        ...cliOptions,
-        browseType
-      }).catch((error) => {
-        bundleWarnings.push(`产品「${product.name}」${browseType === 'assignedtome' ? '指派给我' : '我提交的'} Bug 读取失败：${error.message}`);
-        return { items: [] };
-      });
-      const [openedResult, assignedResult] = await Promise.all([
-        read('openedbyme'),
-        read('assignedtome')
-      ]);
-      const unique = new Map();
-      [...(openedResult.items || []), ...(assignedResult.items || [])].forEach((raw) => {
-        if (raw && raw.id != null) unique.set(String(raw.id), raw);
-      });
-      const bugs = Array.from(unique.values()).map((raw) => normalizeBug(raw, {
-        users,
-        account: config.tester.account,
-        productId: product.id,
-        productName: product.name,
-        moduleNames,
-        webUrl,
-        autojobAccounts: autojobAccountSet
-      }));
-      return { product, bugs, warnings: bundleWarnings };
+      try {
+        const read = (browseType) => listBugs(product.id, {
+          ...cliOptions,
+          browseType,
+          perPage: 1000,
+          timeoutMs: ZENTAO_QUERY_TIMEOUT_MS
+        }).catch((error) => {
+          bundleWarnings.push(`产品「${product.name}」${browseType === 'assignedtome' ? '指派给我' : '我提交的'} Bug 读取失败：${error.message}`);
+          return { items: [] };
+        });
+        const [openedResult, assignedResult] = await Promise.all([
+          read('openedbyme'),
+          read('assignedtome')
+        ]);
+        const unique = new Map();
+        [...(openedResult.items || []), ...(assignedResult.items || [])].forEach((raw) => {
+          if (raw && raw.id != null) unique.set(String(raw.id), raw);
+        });
+        let bugs = Array.from(unique.values()).map((raw) => normalizeBug(raw, {
+          users,
+          account: config.tester.account,
+          productId: product.id,
+          productName: product.name,
+          moduleNames,
+          webUrl,
+          autojobAccounts: autojobAccountSet
+        }));
+        if (bundleWarnings.length) {
+          const knownIds = new Set(bugs.map((bug) => String(bug.id)));
+          const fallback = previousBugs.filter((bug) => (
+            String(bug.productId) === String(product.id) && !knownIds.has(String(bug.id))
+          ));
+          if (fallback.length) {
+            bugs = bugs.concat(fallback);
+            bundleWarnings.push(`产品「${product.name}」已保留上次读取的 ${fallback.length} 条 Bug。`);
+          }
+        }
+        return { product, bugs, warnings: bundleWarnings };
+      } catch (error) {
+        const fallback = previousBugs.filter((bug) => String(bug.productId) === String(product.id));
+        bundleWarnings.push(`产品「${product.name}」同步异常：${error.message}${fallback.length ? `，已保留上次读取的 ${fallback.length} 条 Bug。` : ''}`);
+        return { product, bugs: fallback, warnings: bundleWarnings };
+      }
     }),
     loadAutojobBugs(productRows, users, webUrl, moduleNames, force).catch((error) => {
       warnings.push(`客服反馈扫描失败：${error.message}`);
-      return { enabled: false, accounts: [], items: [], warnings: [], scannedProducts: 0 };
+      return {
+        enabled: config.watch.enabled,
+        accounts: config.watch.autojobAccounts || [],
+        items: previousAutojobItems(),
+        warnings: [],
+        scannedProducts: 0
+      };
+    }),
+    mapLimit(taskExecutions, 8, async (exec) => {
+      try {
+        return await loadExecutionTasks(exec, force);
+      } catch (error) {
+        failedExecutionIds.add(String(exec.id));
+        taskWarnings.push(`迭代 ${exec.id}「${exec.name || ''}」任务读取失败：${error.message}`);
+        return { exec, tasks: [] };
+      }
     })
   ]);
+  const dataMs = Date.now() - dataStart;
   warnings.push(...(autojobResult.warnings || []));
+  warnings.push(...taskWarnings);
 
   const globalBugs = new Map();
   bugBundles.forEach((bundle) => {
@@ -770,50 +952,63 @@ async function buildSnapshot(force) {
   });
   const bugs = Array.from(globalBugs.values()).sort(compareBug);
   const autojobSummary = buildAutojobStats(autojobResult.items || [], account);
-
-  const taskWarnings = [];
-  const taskBundles = await mapLimit(executionRows, 4, async (exec) => {
-    try {
-      const result = await listTasks(exec.id, cliOptions);
-      return { exec, tasks: result.items || [] };
-    } catch (error) {
-      taskWarnings.push(`迭代 ${exec.id}「${exec.name || ''}」任务读取失败：${error.message}`);
-      return { exec, tasks: [] };
-    }
-  });
-  warnings.push(...taskWarnings);
   const taskRows = [];
   const reminderTaskRows = [];
   const finishedTaskStatuses = new Set(['done', 'closed', 'cancel']);
   taskBundles.forEach(({ exec, tasks: rows }) => {
     rows.forEach((row) => {
-      const assignedTo = String(row.assignedTo || '');
-      const openedBy = String(row.openedBy || '');
-      const mine = Boolean(config.tester.account && assignedTo === config.tester.account);
-      const openedByMeForDeveloper = Boolean(
-        config.tester.account
-        && openedBy === config.tester.account
-        && assignedTo
-        && assignedTo !== config.tester.account
-      );
-      if (!mine && !openedByMeForDeveloper) return;
-      const task = normalizeTask(row, {
-        users,
-        account: config.tester.account,
-        execution: exec,
-        webUrl
-      });
-      // Only the current account's tasks are synchronized into the task views.
-      if (task.isMine) {
-        taskRows.push(task);
-        return;
-      }
-      // Tasks I opened and assigned to a developer are kept only for reminders,
-      // so they don't change the “my tasks” scopes, stats or task pages.
-      if (openedByMeForDeveloper && !finishedTaskStatuses.has(task.rawStatus)) {
-        reminderTaskRows.push(task);
+      try {
+        const assignedTo = String(row.assignedTo || '');
+        const openedBy = String(row.openedBy || '');
+        const mine = Boolean(config.tester.account && assignedTo === config.tester.account);
+        const openedByMeForDeveloper = Boolean(
+          config.tester.account
+          && openedBy === config.tester.account
+          && assignedTo
+          && assignedTo !== config.tester.account
+        );
+        if (!mine && !openedByMeForDeveloper) return;
+        const task = normalizeTask(row, {
+          users,
+          account: config.tester.account,
+          execution: exec,
+          webUrl
+        });
+        // Only the current account's tasks are synchronized into the task views.
+        if (task.isMine) {
+          taskRows.push(task);
+          return;
+        }
+        // Tasks I opened and assigned to a developer are kept only for reminders,
+        // so they don't change the “my tasks” scopes, stats or task pages.
+        if (openedByMeForDeveloper && !finishedTaskStatuses.has(task.rawStatus)) {
+          reminderTaskRows.push(task);
+        }
+      } catch (error) {
+        taskWarnings.push(`迭代 ${exec.id}「${exec.name || ''}」任务 ${row.id || ''} 解析失败：${error.message}`);
       }
     });
+  });
+  // 迭代列表或单个迭代读取失败时，保留上次的任务数据，避免一次超时把任务页清空。
+  const taskKeys = new Set(taskRows.map((task) => String(task.id)));
+  const reminderKeys = new Set(reminderTaskRows.map((task) => String(task.id)));
+  const fallbackTasks = executionsFailed
+    ? previousTasks
+    : previousTasks.filter((task) => failedExecutionIds.has(String(task.executionId)));
+  const fallbackReminders = executionsFailed
+    ? previousReminderTasks
+    : previousReminderTasks.filter((task) => failedExecutionIds.has(String(task.executionId)));
+  fallbackTasks.forEach((task) => {
+    if (task && task.id != null && !taskKeys.has(String(task.id))) {
+      taskRows.push(task);
+      taskKeys.add(String(task.id));
+    }
+  });
+  fallbackReminders.forEach((task) => {
+    if (task && task.id != null && !reminderKeys.has(String(task.id))) {
+      reminderTaskRows.push(task);
+      reminderKeys.add(String(task.id));
+    }
   });
   taskRows.sort(compareTask);
   reminderTaskRows.sort(compareTask);
@@ -885,9 +1080,16 @@ async function buildSnapshot(force) {
     }))
   };
 
+  const totalMs = Date.now() - start;
   const sync = {
     lastSyncAt: new Date().toISOString(),
-    durationMs: Date.now() - start,
+    durationMs: totalMs,
+    timings: {
+      foundationMs,
+      dataMs,
+      processMs: Math.max(0, totalMs - foundationMs - dataMs),
+      totalMs
+    },
     source: 'zentao-cli',
     account: config.tester.account,
     testerName,
@@ -905,7 +1107,9 @@ async function buildSnapshot(force) {
       autojobClosed: autojobSummary.closed,
       products: productRows.length,
       projects: projectRows.length,
-      executions: executionRows.length
+      executions: executionRows.length,
+      taskExecutions: taskExecutions.length,
+      autojobProducts: autojobResult.scannedProducts || 0
     }
   };
 
@@ -1251,6 +1455,7 @@ function triggerSync(options) {
   const opts = options || {};
   if (snapshotInflight) return snapshotInflight;
   const epoch = snapshotEpoch;
+  const mutationStart = Date.now();
   syncStartedAt = Date.now();
   syncSource = opts.reason || 'auto';
   syncReason = opts.reason || '';
@@ -1271,7 +1476,26 @@ function triggerSync(options) {
         snapshotRevision += 1;
         lastConnectionError = '';
         lastConnectionErrorCode = '';
-        writeSnapshotCache({ snapshot: built, revision: snapshotRevision });
+        // 同步期间发生的单条 Bug 编辑 / 关闭不能因为全量结果晚到而被覆盖。
+        const pending = Array.from(recentBugMutations.entries())
+          .filter(([, item]) => item.at >= mutationStart);
+        if (pending.length) {
+          replayingBugMutations = true;
+          try {
+            pending.forEach(([id, item]) => {
+              if (item.deleted) removeBugFromSnapshot(id);
+              else applyBugToSnapshot(item.bug);
+              const current = recentBugMutations.get(id);
+              if (current && current.at === item.at) recentBugMutations.delete(id);
+            });
+          } finally {
+            replayingBugMutations = false;
+          }
+        }
+        recentBugMutations.forEach((item, id) => {
+          if (Date.now() - item.at > 10 * 60 * 1000) recentBugMutations.delete(id);
+        });
+        writeSnapshotCache({ snapshot, revision: snapshotRevision });
       }
       return snapshot ? decorateSnapshot(snapshot) : emptySnapshot();
     } catch (error) {
@@ -1361,7 +1585,7 @@ function scheduleNextSync(delayMs) {
     : delayMs;
   nextSyncTimer = setTimeout(() => {
     nextSyncTimer = null;
-    triggerSync({ force: true, reason: 'scheduled' });
+    triggerSync({ force: false, reason: 'scheduled' });
   }, Math.max(1000, delay));
   if (nextSyncTimer.unref) nextSyncTimer.unref();
 }
@@ -2450,7 +2674,8 @@ async function handleApi(req, res, url) {
       return;
     }
     const started = !snapshotInflight;
-    triggerSync({ force: true, reason: 'manual' });
+    const force = url.searchParams.get('force') !== '0';
+    triggerSync({ force, reason: force ? 'manual' : 'manual-incremental' });
     sendJson(res, 202, {
       ok: true,
       data: {
@@ -3073,5 +3298,6 @@ module.exports = {
   parseSeverityInput,
   compareTask,
   compareBug,
+  selectTaskExecutions,
   VIEWS
 };

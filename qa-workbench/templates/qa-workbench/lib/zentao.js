@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawn } = require('node:child_process');
 
 class ZentaoError extends Error {
   constructor(message, options) {
@@ -63,17 +63,7 @@ function resolveCommand(configuredPath) {
 
 function terminateChild(child) {
   if (!child || !child.pid) return;
-  if (process.platform === 'win32') {
-    try {
-      spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore'
-      });
-      return;
-    } catch (error) {
-      // Fall through to the portable kill below.
-    }
-  }
+  // 直接 TerminateProcess，避免同步 taskkill 在系统繁忙时阻塞 Node 事件循环。
   try { child.kill('SIGKILL'); } catch (error) { /* noop */ }
 }
 
@@ -131,7 +121,73 @@ function parseJsonOutput(stdout) {
   }
 }
 
-function runCli(args, options) {
+// 所有禅道 CLI 调用共享同一个并发上限，避免全量同步瞬间拉起几十个 Node 子进程。
+// 增量同步用 8 个并发压缩耗时；手动全量降到 4 个，避免连续几十次查询触发禅道限流。
+const CLI_CONCURRENCY_MAX = Math.max(1, Math.min(12, Number(process.env.QDESK_CLI_CONCURRENCY) || 8));
+let cliConcurrencyValue = CLI_CONCURRENCY_MAX;
+let activeCliCalls = 0;
+const cliWaiters = [];
+
+function setCliConcurrency(value) {
+  if (process.env.QDESK_CLI_CONCURRENCY) return;
+  const next = Math.max(1, Math.min(12, Number(value) || CLI_CONCURRENCY_MAX));
+  if (next === cliConcurrencyValue) return;
+  cliConcurrencyValue = next;
+  while (cliWaiters.length && activeCliCalls < cliConcurrencyValue) {
+    const wake = cliWaiters.shift();
+    activeCliCalls += 1;
+    wake();
+  }
+}
+
+function acquireCliSlot() {
+  if (activeCliCalls < cliConcurrencyValue) {
+    activeCliCalls += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => cliWaiters.push(resolve));
+}
+
+function releaseCliSlot() {
+  const next = cliWaiters.shift();
+  if (next) {
+    next();
+    return;
+  }
+  activeCliCalls = Math.max(0, activeCliCalls - 1);
+}
+
+function isConfigWriteRace(error) {
+  const text = `${(error && error.message) || ''}\n${(error && error.details) || ''}`;
+  return /EPERM|EBUSY|EEXIST/.test(text) && /zentao\.json/i.test(text);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function runCli(args, options) {
+  await acquireCliSlot();
+  try {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await runCliUnlocked(args, options);
+      } catch (error) {
+        lastError = error;
+        // 多个 CLI 进程会同时更新 ~/.config/zentao/zentao.json，偶发 rename 冲突。
+        // 这类错误与业务无关，短暂等待后重试即可，不能让它把整轮同步降级。
+        if (!isConfigWriteRace(error) || attempt === 2) throw error;
+        await sleep(180 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  } finally {
+    releaseCliSlot();
+  }
+}
+
+function runCliUnlocked(args, options) {
   const opts = options || {};
   const resolved = resolveCommand(opts.cliPath);
   const timeoutMs = opts.timeoutMs || 120000;
@@ -315,14 +371,17 @@ async function listExecutions(options) {
 }
 
 async function listTasks(executionId, options) {
-  return listPaged([
+  const opts = options || {};
+  const args = [
     'task',
     `--executionID=${executionId}`,
     '--pick=id,project,execution,module,name,type,pri,estimate,consumed,left,status,openedBy,openedDate,assignedTo,assignedToRealName,assignedDate,deadline,estStarted,realStarted,finishedBy,finishedDate,closedDate,lastEditedDate,desc'
-  ], {
-    ...options,
-    perPage: 500,
-    maxPages: 4
+  ];
+  if (opts.browseType) args.push(`--browseType=${opts.browseType}`);
+  return listPaged(args, {
+    ...opts,
+    perPage: opts.perPage || 1000,
+    maxPages: opts.maxPages || 4
   });
 }
 
@@ -341,7 +400,7 @@ async function listBugs(productId, options) {
   args.push(`--pick=${BUG_FIELDS}`);
   return listPaged(args, {
     ...opts,
-    perPage: opts.perPage || 300,
+    perPage: opts.perPage || 1000,
     maxPages: opts.maxPages || 20
   });
 }
@@ -424,6 +483,7 @@ async function bugAction(action, bugId, input, options) {
 module.exports = {
   ZentaoError,
   resolveCommand,
+  setCliConcurrency,
   parseJsonOutput,
   runCli,
   runJson,

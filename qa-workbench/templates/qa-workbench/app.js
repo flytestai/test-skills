@@ -2716,6 +2716,8 @@
           <div><span>下次自动同步</span><strong>${esc(syncState.nextSyncAt ? fmtFullDate(syncState.nextSyncAt) : '—')}</strong></div>
           <div><span>最近同步</span><strong>${esc(fmtFullDate(sync.lastSyncAt))}</strong></div>
           <div><span>读取耗时</span><strong>${sync.durationMs ? `${(sync.durationMs / 1000).toFixed(1)} 秒` : '—'}</strong></div>
+          ${sync.timings ? `<div><span>耗时构成</span><strong>基础 ${(sync.timings.foundationMs / 1000).toFixed(1)}s · 数据读取 ${(sync.timings.dataMs / 1000).toFixed(1)}s · 组装 ${(sync.timings.processMs / 1000).toFixed(1)}s</strong></div>` : ''}
+          ${sync.counts && sync.counts.taskExecutions != null ? `<div><span>本轮任务扫描</span><strong>${sync.counts.taskExecutions} / ${sync.counts.executions || 0} 个迭代${sync.counts.autojobProducts != null ? ` · 客服反馈 ${sync.counts.autojobProducts} 个产品` : ''}</strong></div>` : ''}
         </div>
         ${lastError ? `<div class="sync-warning">${icon('alert-triangle')}<span>最近一次后台同步失败：${esc(lastError)}</span></div>` : ''}
         ${warnings.length ? `<div class="sync-warning">${icon('alert-triangle')}<span>${warnings.map(esc).join('<br>')}</span></div>` : ''}
