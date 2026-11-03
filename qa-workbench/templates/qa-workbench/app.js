@@ -2212,6 +2212,23 @@
     }
   }
 
+  function patchLocalBug(bugId, patch) {
+    const id = String(bugId);
+    const previous = {};
+    let found = false;
+    [state.allBugs, state.bugs].forEach((list) => {
+      (Array.isArray(list) ? list : []).forEach((bug) => {
+        if (!bug || String(bug.id) !== id) return;
+        found = true;
+        Object.keys(patch).forEach((key) => {
+          if (!Object.prototype.hasOwnProperty.call(previous, key)) previous[key] = bug[key];
+          bug[key] = patch[key];
+        });
+      });
+    });
+    return found ? previous : null;
+  }
+
   async function submitBugAction(form) {
     if (form.dataset.busy === '1') return;
     if (!form.reportValidity()) return;
@@ -2232,12 +2249,43 @@
     const endpoint = action === 'assign'
       ? `/api/bugs/${encodeURIComponent(bugId)}/assign`
       : `/api/bugs/${encodeURIComponent(bugId)}/${action}`;
-    try {
-      const result = await apiRequest(endpoint, {
-        method: 'POST',
-        body: payload,
-        timeoutMs: 120000
+    const request = apiRequest(endpoint, {
+      method: 'POST',
+      body: payload,
+      timeoutMs: 120000
+    });
+    // 关闭操作先本地置为已关闭并立即收起弹窗，再等待禅道确认；
+    // 避免 CLI 往返期间按钮一直转圈，让页面感觉“没反应”。
+    const optimisticClose = action === 'close';
+    let closeBackup = null;
+    if (optimisticClose) {
+      const now = Core.nowIso();
+      closeBackup = patchLocalBug(bugId, {
+        status: 'closed',
+        rawStatus: 'closed',
+        statusLabel: '已关闭',
+        closedDate: now,
+        updatedAt: now
       });
+      closeModal({ restoreFocus: false });
+      ui.bugEditing = false;
+      const nextHash = `#/bugs/${encodeURIComponent(bugId)}`;
+      if (window.location.hash !== nextHash) window.location.hash = nextHash;
+      else refreshAll({ animate: true });
+      renderNotificationPanel();
+      showToast(`正在关闭 Bug #${bugId}…`, 'info');
+    }
+    try {
+      const result = await request;
+      if (optimisticClose) {
+        showToast((result && result.message) || `Bug #${bugId} 已关闭。`, 'success');
+        schedulePolling(result && result.incremental ? 150 : 800);
+        // 服务端会在后台再向禅道复核一次；稍后再拉取一次，替换乐观状态。
+        if (result && result.verificationPending) {
+          setTimeout(() => schedulePolling(800), 3000);
+        }
+        return;
+      }
       closeModal({ restoreFocus: false });
       showToast((result && result.message) || '操作已提交，正在重新同步。', 'success');
       if (action === 'delete') {
@@ -2254,6 +2302,14 @@
       }
       schedulePolling(result && result.incremental ? 150 : 800);
     } catch (error) {
+      if (optimisticClose) {
+        if (closeBackup) patchLocalBug(bugId, closeBackup);
+        refreshAll({ animate: true });
+        renderNotificationPanel();
+        showToast(error.message, 'error');
+        schedulePolling(1500);
+        return;
+      }
       showFormError(form, error.message);
       form.dataset.busy = '';
       if (submit) { submit.disabled = false; submit.classList.remove('is-busy'); }

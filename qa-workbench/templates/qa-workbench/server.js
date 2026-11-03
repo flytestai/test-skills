@@ -627,6 +627,39 @@ function removeBugFromSnapshot(bugId) {
   return true;
 }
 
+function applyRawBugToSnapshot(raw, bugId) {
+  if (!snapshot || !raw || raw.id == null) return false;
+  const existing = (snapshot.bugs || []).find((bug) => String(bug.id) === String(bugId));
+  const productId = String(raw.product || (existing && existing.productId) || '');
+  const product = (snapshot.products || []).find((row) => String(row.id) === productId);
+  const normalized = normalizeBug(raw, {
+    users: snapshotUsersMap(),
+    account: config.tester.account,
+    productId,
+    productName: product ? product.name : (existing ? existing.project : '禅道产品'),
+    moduleNames: config.zentao.moduleNames || {},
+    webUrl: (snapshot.zentao && snapshot.zentao.server) || '',
+    autojobAccounts: new Set(config.watch.autojobAccounts || [])
+  });
+  return applyBugToSnapshot(normalized);
+}
+
+function applyOptimisticBugClose(bugId) {
+  if (!snapshot) return false;
+  const existing = (snapshot.bugs || []).find((bug) => String(bug.id) === String(bugId));
+  if (!existing) return false;
+  const now = new Date().toISOString();
+  return applyBugToSnapshot({
+    ...existing,
+    status: 'closed',
+    rawStatus: 'closed',
+    statusLabel: '已关闭',
+    closedDate: now,
+    closedBy: config.tester.account,
+    updatedAt: now
+  });
+}
+
 async function refreshSnapshotBug(bugId, expectedStatus) {
   if (!snapshot) return false;
   let raw = null;
@@ -642,19 +675,7 @@ async function refreshSnapshotBug(bugId, expectedStatus) {
   if (expectedStatus && String(raw.status || '') !== expectedStatus) {
     throw new Error(`禅道返回的状态仍为「${raw.status || '未知'}」，预期「${expectedStatus}」，稍后会自动重新同步。`);
   }
-  const existing = (snapshot.bugs || []).find((bug) => String(bug.id) === String(bugId));
-  const productId = String(raw.product || (existing && existing.productId) || '');
-  const product = (snapshot.products || []).find((row) => String(row.id) === productId);
-  const normalized = normalizeBug(raw, {
-    users: snapshotUsersMap(),
-    account: config.tester.account,
-    productId,
-    productName: product ? product.name : (existing ? existing.project : '禅道产品'),
-    moduleNames: config.zentao.moduleNames || {},
-    webUrl: (snapshot.zentao && snapshot.zentao.server) || '',
-    autojobAccounts: new Set(config.watch.autojobAccounts || [])
-  });
-  return applyBugToSnapshot(normalized);
+  return applyRawBugToSnapshot(raw, bugId);
 }
 
 async function buildSnapshot(force) {
@@ -2599,15 +2620,16 @@ async function handleApi(req, res, url) {
     const bugId = bugActionMatch[1];
     const action = bugActionMatch[2];
     const body = await readJsonBody(req, 256 * 1024);
+    let actionResult = null;
     try {
       if (action === 'assign') {
         const account = String(body.assignedTo || '').trim();
         if (!/^[A-Za-z0-9_.@-]{1,64}$/.test(account)) {
           throw badRequest('请选择要指派的禅道账号。');
         }
-        await updateBug(bugId, { assignedTo: account }, cliOptions);
+        actionResult = await updateBug(bugId, { assignedTo: account }, cliOptions);
       } else {
-        await bugAction(action, bugId, normalizeBugAction(action, body), cliOptions);
+        actionResult = await bugAction(action, bugId, normalizeBugAction(action, body), cliOptions);
       }
     } catch (error) {
       if (error instanceof ZentaoError) {
@@ -2618,8 +2640,33 @@ async function handleApi(req, res, url) {
       throw error;
     }
     let incremental = false;
+    let verificationPending = false;
     if (action === 'delete') {
       incremental = removeBugFromSnapshot(bugId);
+    } else if (action === 'close') {
+      // 关闭接口先直接采用操作返回的数据或本地乐观状态，单条复核放到后台，
+      // 避免“关闭 + 再查一次 Bug”两个 CLI 调用串行造成明显卡顿。
+      let raw = actionResult;
+      for (let depth = 0; depth < 2; depth += 1) {
+        if (!raw || typeof raw !== 'object' || raw.id != null) break;
+        raw = raw.data;
+      }
+      const rawConfirmed = raw && raw.id != null
+        && String(raw.status || '') === 'closed'
+        && (raw.title != null || raw.product != null || raw.openedBy != null);
+      incremental = rawConfirmed
+        ? applyRawBugToSnapshot(raw, bugId)
+        : applyOptimisticBugClose(bugId);
+      if (!rawConfirmed) {
+        verificationPending = true;
+        const verifyTimer = setTimeout(() => {
+          refreshSnapshotBug(bugId, 'closed').catch((error) => {
+            console.error(`[QDesk] 关闭后复核失败（#${bugId}）：`, error.message);
+            triggerSync({ force: true, reason: 'bug-close-verify' });
+          });
+        }, 0);
+        if (verifyTimer.unref) verifyTimer.unref();
+      }
     } else {
       const expectedStatus = {
         resolve: 'resolved',
@@ -2651,6 +2698,7 @@ async function handleApi(req, res, url) {
           ? `Bug #${bugId} 已${actionLabels[action]}。`
           : `Bug #${bugId} 已${actionLabels[action]}，正在从禅道重新同步。`,
         incremental,
+        verificationPending,
         refreshRequired: !incremental
       }
     });
