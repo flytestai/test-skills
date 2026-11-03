@@ -1008,11 +1008,18 @@
     // 日报「今日新增」与 Bug 跟踪保持一致：只统计当天由当前账号提交/新建的 Bug。
     // 兼容没有 isMine 字段的旧本地数据与演示数据。
     const hasOwnershipFlags = bugs.some((bug) => typeof bug.isMine === 'boolean');
+    const account = String((state.tester && state.tester.account) || '');
+    // 只有当前账号关闭的 Bug 才计入“验证已修复”；旧快照没有 closedByAccount 时按本账号处理。
+    const closedByTester = (bug) => !account || !bug.closedByAccount || bug.closedByAccount === account;
     const foundBugs = bugs.filter((bug) => (
       (!hasOwnershipFlags || bug.isMine) && localDate(bug.createdAt) === day
     ));
-    const verifiedBugs = bugs.filter((bug) => bug.verifiedAt && localDate(bug.verifiedAt) === day);
-    const closedBugs = bugs.filter((bug) => bug.closedAt && localDate(bug.closedAt) === day);
+    const verifiedBugs = bugs.filter((bug) => (
+      !bug.isAutojob && bug.verifiedAt && localDate(bug.verifiedAt) === day && closedByTester(bug)
+    ));
+    const closedBugs = bugs.filter((bug) => (
+      !bug.isAutojob && bug.closedAt && localDate(bug.closedAt) === day && closedByTester(bug)
+    ));
     const ongoingTasks = tasks.filter((task) => {
       if (task.status === 'done') return false;
       if (task.createdAt && localDate(task.createdAt) > day) return false;
@@ -1087,15 +1094,26 @@
       if (item.status !== 'ended') return false;
       return Boolean(item.testEnd) && localDate(item.testEnd) === day;
     };
-    // 已结束或已关闭的版本不再出现在当天日报；只有结束/关闭当天保留一行“测试完成”。
+    const bugs = Array.isArray(scopedBugs) ? scopedBugs : [];
+    const account = String((state.tester && state.tester.account) || '');
+    const hasOwnershipFlags = bugs.some((bug) => typeof bug.isMine === 'boolean');
+    const closedByTester = (bug) => !account || !bug.closedByAccount || bug.closedByAccount === account;
+    const isCompleted = (item) => Boolean(item.closed || item.status === 'ended');
+    // 已结束版本当天若有验证记录，也要保留，避免验证数量被“测试完成”吞掉。
+    const hasDailyActivity = (item) => bugs.some((bug) => (
+      versionKey(bug.version) === item.key
+      && !bug.isAutojob
+      && bug.verifiedAt
+      && localDate(bug.verifiedAt) === day
+      && closedByTester(bug)
+    ));
     const scheduled = releases.filter((item) => {
       if (!item.testStart && !item.testEnd) return false;
-      if (completedToday(item)) return true;
-      if (item.closed || item.status === 'ended') return false;
-      return true;
+      if (!isCompleted(item)) return true;
+      return completedToday(item) || hasDailyActivity(item);
     });
     if (!scheduled.length) return [];
-    const active = scheduled.filter((item) => !completedToday(item));
+    const active = scheduled.filter((item) => !isCompleted(item));
     const focus = dailyFocus({
       tasks: allTasks,
       bugs: allBugs,
@@ -1103,17 +1121,28 @@
       tester: state.tester || null
     }, day);
     const progressMap = new Map(focus.versions.items.map((item) => [item.key, item.progress]));
-    const bugs = Array.isArray(scopedBugs) ? scopedBugs : [];
     return scheduled.map((item) => {
-      if (completedToday(item)) {
+      const submitted = bugs.filter((bug) => (
+        (!hasOwnershipFlags || bug.isMine)
+        && localDate(bug.createdAt) === day
+        && versionKey(bug.version) === item.key
+      )).length;
+      const verified = bugs.filter((bug) => (
+        !bug.isAutojob
+        && bug.verifiedAt
+        && localDate(bug.verifiedAt) === day
+        && closedByTester(bug)
+        && versionKey(bug.version) === item.key
+      )).length;
+      if (isCompleted(item)) {
         return {
           key: item.key,
           name: item.name,
           completed: true,
           progress: 0,
           dailyOnly: false,
-          submitted: 0,
-          verified: 0,
+          submitted,
+          verified,
           remaining: 0
         };
       }
@@ -1126,12 +1155,8 @@
         completed: false,
         progress,
         dailyOnly,
-        submitted: bugs.filter((bug) => (
-          localDate(bug.createdAt) === day && versionKey(bug.version) === item.key
-        )).length,
-        verified: bugs.filter((bug) => (
-          bug.verifiedAt && localDate(bug.verifiedAt) === day && versionKey(bug.version) === item.key
-        )).length,
+        submitted,
+        verified,
         remaining: bugs.filter((bug) => isBugOpen(bug) && versionKey(bug.version) === item.key).length
       };
     });
@@ -1174,8 +1199,20 @@
     const tasks = rawTasks.some((task) => typeof task.isMine === 'boolean')
       ? rawTasks.filter((task) => task.isMine)
       : rawTasks;
-    const bugs = rawBugs.some((bug) => typeof bug.isMine === 'boolean')
-      ? rawBugs.filter((bug) => bug.isMine)
+    const account = String((state.tester && state.tester.account) || '');
+    const hasOwnershipFlags = rawBugs.some((bug) => typeof bug.isMine === 'boolean');
+    const closedByTester = (bug) => !account || !bug.closedByAccount || bug.closedByAccount === account;
+    // “今日新增”仍只算我提交的 Bug，但“验证已修复”还要包含今天由我关闭、别人提交的 Bug。
+    const bugs = hasOwnershipFlags
+      ? rawBugs.filter((bug) => (
+        bug.isMine
+        || (
+          !bug.isAutojob
+          && bug.closedAt
+          && localDate(bug.closedAt) === day
+          && closedByTester(bug)
+        )
+      ))
       : rawBugs;
     const reportState = Object.assign({}, state, { tasks, bugs });
     const data = collectDailyData(reportState, day);
@@ -1227,23 +1264,18 @@
     // 每个版本行只写一次当天新增/验证数量；有多个版本时也各自展示，不再输出汇总的 Bug 概览行。
     const versionLines = versionStats.length
       ? versionStats.map((item) => {
-        if (item.completed) return `${item.name}版本测试完成`;
+        if (item.completed) {
+          const verified = item.verified ? `  验证已修复bug：${item.verified}个` : '';
+          return `${item.name}版本测试完成${verified}`;
+        }
         const daily = `新增bug：${item.submitted}个  验证已修复bug：${item.verified}个`;
         if (item.dailyOnly) return `${item.name}版本${daily}`;
         return `${item.name}版本测试进度：${item.progress}%  ${daily}  剩余未关闭bug：${item.remaining}个`;
       }).join('\n')
       : '暂无进行中的测试版本';
-    // 只有一个进行中的版本时，Bug 概览与版本行保持同一范围。
-    const singleVersion = activeVersions.length === 1 ? activeVersions[0] : null;
-    const sameVersion = (bug) => !singleVersion
-      || versionKey(bug.version) === singleVersion.key;
-    const foundCount = singleVersion
-      ? data.foundBugs.filter(sameVersion).length
-      : data.foundBugs.length;
-    // “验收bug”与版本行的“验证已修复bug”使用同一口径，避免复制后数字不一致。
-    const verifiedCount = singleVersion
-      ? data.verifiedBugs.filter(sameVersion).length
-      : data.verifiedBugs.length;
+    // 日报汇总使用当天全部新增 / 验证数量，避免“测试完成”的版本把验证数量隐藏掉。
+    const foundCount = data.foundBugs.length;
+    const verifiedCount = data.verifiedBugs.length;
     // 版本行已经逐版本写了新增/验证数量，不再重复输出一行 Bug 概览；
     // 没有进行中的版本时，才用 Bug 概览保留当天总量。
     const bugSummary = activeVersions.length

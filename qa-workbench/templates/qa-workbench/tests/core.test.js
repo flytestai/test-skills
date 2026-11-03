@@ -213,6 +213,73 @@ test('只设置开始时间的版本日报只统计当日提交与验证 Bug', (
   assert.doesNotMatch(copied, /验收bug/);
 });
 
+test('测试完成的版本仍统计当天验证已修复 Bug', () => {
+  const state = fixedState();
+  state.tasks = [];
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.releases = [{
+    key: '3.0.0', name: '3.0.0', projects: [],
+    testStart: '2026-10-01T09:00', testEnd: '2026-10-26T18:00',
+    closed: true, status: 'closed', planUpdatedAt: Core.dateAt(FIXED_DATE, 18, 0)
+  }];
+  state.bugs = Array.from({ length: 10 }, (_, index) => ({
+    id: `C-${index + 1}`,
+    title: `今日验证 ${index + 1}`,
+    status: 'closed',
+    isMine: true,
+    severity: 'P2',
+    version: '3.0.0',
+    createdAt: Core.dateAt(Core.addDays(FIXED_DATE, -2), 9, 0),
+    verifiedAt: Core.dateAt(FIXED_DATE, 10, index),
+    closedAt: Core.dateAt(FIXED_DATE, 10, index),
+    closedByAccount: 'weizhen',
+    history: []
+  }));
+  state.autojobBugs = [];
+  state.autojob = { accounts: ['autojob'], bugs: [] };
+  const report = Core.buildReport(state, FIXED_DATE);
+  assert.equal(report.content.version, '3.0.0版本测试完成  验证已修复bug：10个');
+  assert.match(report.content.summary, /验收 10 个 Bug/);
+});
+
+test('别人提交但我今天关闭的 Bug 计入验证，不计入今日新增', () => {
+  const state = fixedState();
+  state.tasks = [];
+  state.tester = { account: 'weizhen', name: '魏振' };
+  state.releases = [{
+    key: '3.0.0', name: '3.0.0', projects: [],
+    testStart: '2026-10-01T09:00', testEnd: '', status: 'testing'
+  }];
+  state.bugs = [{
+    id: 'O-1', title: '别人提交我关闭', status: 'closed', isMine: false,
+    severity: 'P2', version: '3.0.0',
+    createdAt: Core.dateAt(Core.addDays(FIXED_DATE, -2), 9, 0),
+    verifiedAt: Core.dateAt(FIXED_DATE, 10, 0),
+    closedAt: Core.dateAt(FIXED_DATE, 10, 0),
+    closedByAccount: 'weizhen', history: []
+  }, {
+    id: 'M-2', title: '我提交别人关闭', status: 'closed', isMine: true,
+    severity: 'P2', version: '3.0.0',
+    createdAt: Core.dateAt(Core.addDays(FIXED_DATE, -2), 9, 0),
+    verifiedAt: Core.dateAt(FIXED_DATE, 11, 0),
+    closedAt: Core.dateAt(FIXED_DATE, 11, 0),
+    closedByAccount: 'dev1', history: []
+  }];
+  state.autojobBugs = [];
+  state.autojob = { accounts: ['autojob'], bugs: [] };
+
+  const data = Core.collectDailyData(state, FIXED_DATE);
+  assert.deepEqual(data.foundBugs, []);
+  assert.deepEqual(data.verifiedBugs.map((bug) => bug.id), ['O-1']);
+
+  const report = Core.buildReport(state, FIXED_DATE);
+  assert.match(report.content.version, /验证已修复bug：1个/);
+  assert.match(report.content.summary, /今日新增 0 个 Bug/);
+  assert.match(report.content.summary, /验收 1 个 Bug/);
+  assert.match(report.content.bugs, /O-1/);
+  assert.doesNotMatch(report.content.bugs, /M-2/);
+});
+
 test('AI客服日报把指派给我后转给别人的 Bug 计入今日新增', () => {
   const state = fixedState();
   state.tester = { account: 'weizhen', name: '魏振' };
