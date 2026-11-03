@@ -577,8 +577,9 @@ function buildGroupMessages(group) {
   const actionText = group.taskCount ? '处理' : '修复';
   const countGap = group.taskCount ? '' : ' ';
   const prefix = scope ? `  ${scope}  ` : '  ';
+  const thresholdDays = Math.max(1, Number(group.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays);
   return [`【${title}】\n`
-    + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超期，最长 ${group.maxDays} 天未处理！`
+    + `@${group.name || group.account}${prefix}你有 ${countText}${countGap}已超过${thresholdDays}天未处理，最长 ${group.maxDays} 天未处理！`
     + `请尽快${actionText}并更新禅道状态！`];
 }
 
@@ -612,6 +613,7 @@ function buildReminderGroups(sources, account, config, now, moduleNames) {
         bugCount: 0,
         taskCount: 0,
         repeatCount: 0,
+        thresholdDays: Math.max(1, Number(config.thresholdDays) || DEFAULT_REMINDER_CONFIG.thresholdDays),
         maxDays: 0,
         items: [],
         bugs: [],
